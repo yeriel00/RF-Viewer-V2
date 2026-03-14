@@ -1,122 +1,288 @@
-RF Viewer .MD
+# RF Viewer V2
 
-# RF Viewer V2 Setup Guide
+Pi-based RF survey and tracking viewer with:
 
-A quick reference for getting the Pi-based RF Viewer V2 running again in the future.
+- live `rtl_power` ingestion
+- Node web UI
+- survey mode
+- track mode
+- pause/resume scanner control
+- proximity mode with audio cues
+- optional Alfa hotspot access for field use
 
-This guide is focused on:
-- installing the basics
-- creating the files we need
-- starting the hotspot
-- starting the Node viewer
-- starting the scanner feed
-- checking that everything is alive
-
----
-
-## Table of Contents
-
-1. [Install Node](#1-install-node)
-2. [Create the project folders](#2-create-the-project-folders)
-3. [Create the app files](#3-create-the-app-files)
-4. [Test the app manually](#4-test-the-app-manually)
-5. [Create the Alfa hotspot startup script](#5-create-the-alfa-hotspot-startup-script)
-6. [Create the hotspot service](#6-create-the-hotspot-service)
-7. [Create the Node viewer service](#7-create-the-node-viewer-service)
-8. [Create the scanner service](#8-create-the-scanner-service)
-9. [Check service status](#9-check-service-status)
-10. [Check local app status on the Pi](#10-check-local-app-status-on-the-pi)
-11. [Find the hotspot IP](#11-find-the-hotspot-ip)
-12. [Connect from another device](#12-connect-from-another-device)
-13. [Restart everything after edits](#13-restart-everything-after-edits)
-14. [View logs if something breaks](#14-view-logs-if-something-breaks)
-15. [Reboot test](#15-reboot-test)
-16. [Useful file locations](#16-useful-file-locations)
+This README assumes you are starting from a cloned repo.
 
 ---
 
-## 1. Install Node
+## Features
 
-Install Node and npm on the Pi:
+- Browser-based spectrum viewer
+- Live peak/event table
+- Survey and track scanner modes
+- Pause/resume scanner from the UI
+- Proximity mode with hot/cold feedback
+- Record controls
+- Headless Pi-friendly deployment
+- Optional Alfa hotspot for car or field use
+
+---
+
+## Project Structure
+
+```text
+rf-viewer-v2/
+├── package.json
+├── parser.js
+├── server.js
+├── settings.json
+├── scanner.json
+├── scanner.runtime.json
+├── public/
+│   ├── index.html
+│   └── js/
+│       └── app.js
+└── scanner/
+    └── rf-viewer-stream.sh
+```
+
+---
+
+## Prerequisites
+
+Install the required packages on the Raspberry Pi:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y nodejs npm
+sudo apt-get install -y nodejs npm jq netcat-openbsd
+
 node -v
 npm -v
 ```
 
+You will also need:
+
+- an RTL-SDR device
+- `rtl_power` available on the system
+- an optional Alfa USB Wi-Fi dongle if using hotspot mode
+
 ---
 
-## 2. Create the project folders
+## Install
 
-Create the project directory structure:
+Clone the repo:
 
 ```bash
-mkdir -p ~/Desktop/projects/rf-viewer-v2/public
-mkdir -p ~/Desktop/projects/rf-viewer-v2/scanner
-mkdir -p ~/Desktop/projects/rf-viewer-v2/scans
-cd ~/Desktop/projects/rf-viewer-v2
+cd ~/Desktop
+git clone <your-repo-url> rf-viewer-v2
+cd ~/Desktop/rf-viewer-v2
 ```
 
----
-
-## 3. Create the app files
-
-Create the main files:
+If the repo already exists:
 
 ```bash
-nano package.json
-nano parser.js
-nano server.js
-nano public/index.html
-nano scanner/rf-viewer-stream.sh
+cd ~/Desktop/rf-viewer-v2
+git pull
+```
+
+Make sure the scanner script is executable:
+
+```bash
 chmod +x scanner/rf-viewer-stream.sh
 ```
 
 ---
 
-## 4. Test the app manually
+## Run Manually
 
-Start the Node viewer:
+Start the web server:
 
 ```bash
-cd ~/Desktop/projects/rf-viewer-v2
+cd ~/Desktop/rf-viewer-v2
 node server.js
 ```
 
-In another terminal, start the scanner feed locally into the viewer listener:
+In another terminal, start the scanner feed:
 
 ```bash
-cd ~/Desktop/projects/rf-viewer-v2
+cd ~/Desktop/rf-viewer-v2
 ./scanner/rf-viewer-stream.sh 127.0.0.1 9001
+```
+
+Open the UI locally:
+
+```text
+http://127.0.0.1:3000
 ```
 
 ---
 
-## 5. Create the Alfa hotspot startup script
+## Runtime Modes
 
-Create the hotspot startup script:
+### Survey Mode
+
+Wide scanning across a configured frequency range.
+
+### Track Mode
+
+Narrow scanning around a selected frequency.
+
+### Paused Mode
+
+Stops active scan execution while keeping the UI available.
+
+### Proximity Mode
+
+Track-mode helper that gives hot/cold style strength feedback and optional audio alerts.
+
+---
+
+## API Quick Checks
+
+Viewer alive:
+
+```bash
+curl -I http://127.0.0.1:3000
+```
+
+Frontend JS loading:
+
+```bash
+curl -I http://127.0.0.1:3000/js/app.js
+```
+
+Live data:
+
+```bash
+curl -s http://127.0.0.1:3000/api/live | jq
+```
+
+Scanner state:
+
+```bash
+curl -s http://127.0.0.1:3000/api/scanner | jq
+```
+
+Ports listening:
+
+```bash
+ss -ltnp | grep 3000
+ss -ltnp | grep 9001
+```
+
+---
+
+## Systemd Services
+
+### `rf-viewer.service`
+
+Runs the Node web app on port `3000`.
+
+Create:
+
+```bash
+sudo nano /etc/systemd/system/rf-viewer.service
+```
+
+Example:
+
+```ini
+[Unit]
+Description=RF Viewer Node Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=user
+WorkingDirectory=/home/user/Desktop/rf-viewer-v2
+ExecStart=/usr/bin/node /home/user/Desktop/rf-viewer-v2/server.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable rf-viewer.service
+sudo systemctl start rf-viewer.service
+```
+
+### `rf-viewer-scanner.service`
+
+Runs the scanner script and sends live lines into `127.0.0.1:9001`.
+
+Create:
+
+```bash
+sudo nano /etc/systemd/system/rf-viewer-scanner.service
+```
+
+Example:
+
+```ini
+[Unit]
+Description=RF Viewer Scanner Stream
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=misterm
+WorkingDirectory=/home/user/Desktop/rf-viewer-v2
+ExecStart=/home/user/Desktop/rf-viewer-v2/scanner/rf-viewer-stream.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable rf-viewer-scanner.service
+sudo systemctl start rf-viewer-scanner.service
+```
+
+### `alfa-hotspot.service`
+
+Optional hotspot service for the Alfa dongle.
+
+---
+
+## Alfa Hotspot Setup
+
+### Hotspot Script
+
+Create:
 
 ```bash
 sudo nano /usr/local/bin/start-alfa-hotspot.sh
 sudo chmod +x /usr/local/bin/start-alfa-hotspot.sh
 ```
 
-This script is responsible for:
+This script should:
 
-- checking if the Alfa dongle exists on `wlan1`
-- bringing up the hotspot
-- leaving Ethernet and built-in Wi-Fi alone
+- check for the Alfa dongle on `wlan1`
+- bring up the hotspot if present
+- leave Ethernet and built-in Wi-Fi alone
 
----
+### Hotspot Service
 
-## 6. Create the hotspot service
-
-Create the hotspot systemd service:
+Create:
 
 ```bash
 sudo nano /etc/systemd/system/alfa-hotspot.service
+```
+
+Enable and start:
+
+```bash
 sudo systemctl daemon-reload
 sudo systemctl enable alfa-hotspot.service
 sudo systemctl start alfa-hotspot.service
@@ -124,89 +290,23 @@ sudo systemctl start alfa-hotspot.service
 
 ---
 
-## 7. Create the Node viewer service
+## Connect Over Hotspot
 
-Create the Node service:
-
-```bash
-sudo nano /etc/systemd/system/rf-viewer.service
-sudo systemctl daemon-reload
-sudo systemctl enable rf-viewer.service
-sudo systemctl start rf-viewer.service
-```
-
-This service runs the web app on port **3000**.
-
----
-
-## 8. Create the scanner service
-
-Create the scanner service:
-
-```bash
-sudo nano /etc/systemd/system/rf-viewer-scanner.service
-sudo systemctl daemon-reload
-sudo systemctl enable rf-viewer-scanner.service
-sudo systemctl start rf-viewer-scanner.service
-```
-
-This service runs the scanner script and feeds live lines into **127.0.0.1:9001**.
-
----
-
-## 9. Check service status
-
-Check all three services:
-
-```bash
-sudo systemctl status alfa-hotspot.service --no-pager
-sudo systemctl status rf-viewer.service --no-pager
-sudo systemctl status rf-viewer-scanner.service --no-pager
-```
-
----
-
-## 10. Check local app status on the Pi
-
-Check that the viewer and listener are alive:
-
-```bash
-ss -ltnp | grep 3000
-ss -ltnp | grep 9001
-curl -s http://127.0.0.1:3000/api/live
-```
-
-Expected:
-
-- **3000** should be listening for the webpage  
-- **9001** should be listening for live scanner rows  
-- `/api/live` should eventually show JSON with rows, not empty data
-
----
-
-## 11. Find the hotspot IP
-
-Check the Alfa hotspot interface IP:
+Check the hotspot IP:
 
 ```bash
 ip addr show wlan1
 ```
 
-Usually this ends up being something like:
+Typical result:
 
-```
+```text
 10.42.0.1
 ```
 
----
+From another device on the hotspot, open the UI:
 
-## 12. Connect from another device
-
-Once another laptop or phone joins the hotspot, use the hotspot IP to access the Pi.
-
-Open the viewer in a browser:
-
-```
+```text
 http://10.42.0.1:3000
 ```
 
@@ -216,13 +316,13 @@ SSH into the Pi:
 ssh misterm@10.42.0.1
 ```
 
-Use the actual `wlan1` IP if it differs.
+Use the actual `wlan1` IP if different.
 
 ---
 
-## 13. Restart everything after edits
+## Daily Commands
 
-If you edit scripts or service files:
+Restart everything:
 
 ```bash
 sudo systemctl daemon-reload
@@ -231,64 +331,64 @@ sudo systemctl restart rf-viewer.service
 sudo systemctl restart rf-viewer-scanner.service
 ```
 
----
-
-## 14. View logs if something breaks
-
-Check logs for each piece:
+Restart only the web app:
 
 ```bash
-journalctl -u alfa-hotspot.service -n 50 --no-pager
-journalctl -u rf-viewer.service -n 50 --no-pager
-journalctl -u rf-viewer-scanner.service -n 50 --no-pager
+sudo systemctl restart rf-viewer.service
 ```
 
-Hotspot-specific logfile:
+Restart only the scanner:
 
 ```bash
-cat /var/log/alfa-hotspot.log
+sudo systemctl restart rf-viewer-scanner.service
 ```
 
----
-
-## 15. Reboot test
-
-Do a full reboot test after everything is configured:
+Check service status:
 
 ```bash
-sudo reboot
+sudo systemctl status alfa-hotspot.service --no-pager
+sudo systemctl status rf-viewer.service --no-pager
+sudo systemctl status rf-viewer-scanner.service --no-pager
 ```
-
-After reboot, verify:
-
-- hotspot comes up  
-- viewer service is running  
-- scanner service is running  
-- another device can join the hotspot and open the webpage  
 
 ---
 
-## 16. Useful file locations
+## Configuration Files
+
+### `settings.json`
+
+Viewer-side thresholds and filtering defaults.
+
+### `scanner.json`
+
+Saved scanner configuration.
+
+### `scanner.runtime.json`
+
+Live scanner runtime state used by the scanner script.
+
+---
+
+## Useful File Locations
 
 Project files:
 
-```
-~/Desktop/projects/rf-viewer-v2/package.json
-~/Desktop/projects/rf-viewer-v2/parser.js
-~/Desktop/projects/rf-viewer-v2/server.js
-~/Desktop/projects/rf-viewer-v2/public/index.html
-~/Desktop/projects/rf-viewer-v2/scanner/rf-viewer-stream.sh
+```text
+~/Desktop/rf-viewer-v2/package.json
+~/Desktop/rf-viewer-v2/parser.js
+~/Desktop/rf-viewer-v2/server.js
+~/Desktop/rf-viewer-v2/public/index.html
+~/Desktop/rf-viewer-v2/public/js/app.js
+~/Desktop/rf-viewer-v2/scanner/rf-viewer-stream.sh
+~/Desktop/rf-viewer-v2/settings.json
+~/Desktop/rf-viewer-v2/scanner.json
+~/Desktop/rf-viewer-v2/scanner.runtime.json
 ```
 
-Hotspot script:
+System scripts and services:
 
-```
+```text
 /usr/local/bin/start-alfa-hotspot.sh
-```
-
-Systemd services:
-
-```
 /etc/systemd/system/alfa-hotspot.service
 /etc/systemd/system/rf-viewer.service
 /etc/systemd/system/rf-viewer-scanner.service
@@ -296,26 +396,137 @@ Systemd services:
 
 ---
 
-## Notes
+## Troubleshooting
 
-- `wlan0` is the Pi’s built-in Wi-Fi  
-- `wlan1` is the Alfa dongle  
-- hotspot should only use **wlan1**  
-- Ethernet can stay connected without affecting the hotspot  
-- the viewer runs on the Pi, so client devices only need the URL  
-- the scanner feeds the Node app locally through port **9001**
+### UI loads but spectrum is blank
+
+Check:
+
+```bash
+ss -ltnp | grep 9001
+curl -s http://127.0.0.1:3000/api/live | jq
+```
+
+If `/api/live` is empty, the scanner feed is not reaching the Node app.
+
+### Frontend JS is not loading
+
+Check:
+
+```bash
+curl -I http://127.0.0.1:3000/js/app.js
+```
+
+If this returns `404`, make sure:
+
+- `public/js/app.js` exists
+- `index.html` points to `/js/app.js`
+- `server.js` is serving static JS files correctly
+
+### Track mode looks active but data is stale
+
+Check the scanner state:
+
+```bash
+curl -s http://127.0.0.1:3000/api/scanner | jq
+```
+
+Then inspect the scanner logs:
+
+```bash
+journalctl -u rf-viewer-scanner.service -n 50 --no-pager
+```
+
+### Scanner is paused and not resuming
+
+Check current mode and last active mode:
+
+```bash
+curl -s http://127.0.0.1:3000/api/scanner | jq
+```
+
+You should see:
+
+- `mode`
+- `lastActiveMode`
+
+### Web app changed but nothing updates
+
+Restart the viewer service:
+
+```bash
+sudo systemctl restart rf-viewer.service
+```
+
+Then hard refresh the browser.
+
+### Scanner shell script changed but behavior did not
+
+Restart the scanner service:
+
+```bash
+sudo systemctl restart rf-viewer-scanner.service
+```
+
+### Hotspot is not showing up
+
+Check the hotspot service:
+
+```bash
+sudo systemctl status alfa-hotspot.service --no-pager
+cat /var/log/alfa-hotspot.log
+```
+
+Check interfaces:
+
+```bash
+nmcli device status
+iw dev
+```
 
 ---
 
-## Sanity checklist
+## Reboot Test
+
+After setup is complete:
+
+```bash
+sudo reboot
+```
+
+After reboot, verify:
+
+- hotspot comes up
+- viewer service is running
+- scanner service is running
+- another device can join the hotspot
+- the web UI opens
+- `/api/live` returns data
+- pause/resume still works
+
+---
+
+## Notes
+
+- `wlan0` is the Pi’s built-in Wi-Fi
+- `wlan1` is the Alfa dongle
+- hotspot should only use `wlan1`
+- Ethernet can stay connected without affecting the hotspot
+- the viewer runs on the Pi, so client devices only need the URL
+- the scanner feeds the Node app locally through port `9001`
+
+---
+
+## Sanity Checklist
 
 If everything is working, this should all be true:
 
-- hotspot is visible from another device  
-- another device can join the hotspot  
-- `ssh user@<hotspot-ip>` works  
-- `http://<hotspot-ip>:3000` loads the viewer  
-- `/api/live` shows rows  
-- `rf-viewer.service` is active  
-- `rf-viewer-scanner.service` is active  
-- `alfa-hotspot.service` is active  
+- hotspot is visible from another device
+- another device can join the hotspot
+- `ssh user@<hotspot-ip>` works
+- `http://<hotspot-ip>:3000` loads the viewer
+- `/api/live` shows rows
+- `/api/scanner` shows the correct mode
+- `rf-viewer.service` is active
+- `rf-viewer-scanner.service` is active
+- `alfa-hotspot.service` is active
