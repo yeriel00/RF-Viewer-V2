@@ -281,9 +281,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=misterm
-WorkingDirectory=/home/misterm/Desktop/rf-viewer-v2
-ExecStart=/usr/bin/node /home/misterm/Desktop/rf-viewer-v2/server.js
+User=user
+WorkingDirectory=/home/user/Desktop/rf-viewer-v2
+ExecStart=/usr/bin/node /home/user/Desktop/rf-viewer-v2/server.js
 Restart=always
 RestartSec=3
 
@@ -319,9 +319,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=misterm
-WorkingDirectory=/home/misterm/Desktop/rf-viewer-v2
-ExecStart=/home/misterm/Desktop/rf-viewer-v2/scanner/rf-viewer-stream.sh 127.0.0.1 9001
+User=user
+WorkingDirectory=/home/user/Desktop/rf-viewer-v2
+ExecStart=/home/user/Desktop/rf-viewer-v2/scanner/rf-viewer-stream.sh 127.0.0.1 9001
 Restart=always
 RestartSec=3
 
@@ -419,7 +419,7 @@ http://10.42.0.1:3000
 SSH into the Pi:
 
 ```bash
-ssh misterm@10.42.0.1
+ssh user@10.42.0.1
 ```
 
 Use the actual `wlan1` IP if different.
@@ -653,7 +653,7 @@ If everything is working, this should all be true:
 
 - hotspot is visible from another device
 - another device can join the hotspot
-- `ssh misterm@<hotspot-ip>` works
+- `ssh user@<hotspot-ip>` works
 - `http://<hotspot-ip>:3000` loads the viewer
 - `/api/live` shows rows
 - `/api/scanner` shows the correct mode
