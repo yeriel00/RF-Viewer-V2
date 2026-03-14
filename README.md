@@ -41,8 +41,10 @@ rf-viewer-v2/
 │   ├── index.html
 │   └── js/
 │       └── app.js
-└── scanner/
-    └── rf-viewer-stream.sh
+├── scanner/
+│   └── rf-viewer-stream.sh
+└── scripts/
+    └── start-alfa-hotspot.sh
 ```
 
 ---
@@ -53,7 +55,7 @@ Install the required packages on the Raspberry Pi:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y nodejs npm jq netcat-openbsd
+sudo apt-get install -y nodejs npm jq netcat-openbsd network-manager
 
 node -v
 npm -v
@@ -89,6 +91,92 @@ Make sure the scanner script is executable:
 ```bash
 chmod +x scanner/rf-viewer-stream.sh
 ```
+
+Make sure the hotspot helper script in the repo is executable too:
+
+```bash
+chmod +x scripts/start-alfa-hotspot.sh
+```
+
+---
+
+## Included Hotspot Script
+
+The repo now includes the hotspot startup script here:
+
+```text
+scripts/start-alfa-hotspot.sh
+```
+
+After pulling the repo, copy it into place on the Pi:
+
+```bash
+sudo cp ~/Desktop/rf-viewer-v2/scripts/start-alfa-hotspot.sh /usr/local/bin/start-alfa-hotspot.sh
+sudo chmod +x /usr/local/bin/start-alfa-hotspot.sh
+```
+
+This keeps the script version-controlled inside the repo while still installing it to the system path used by `systemd`.
+
+---
+
+## `scripts/start-alfa-hotspot.sh`
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+LOGFILE="/var/log/alfa-hotspot.log"
+IFACE="wlan1"
+CON_NAME="rf-viewer-hotspot"
+SSID="RFV"
+PASSWORD="password"
+
+mkdir -p "$(dirname "$LOGFILE")"
+touch "$LOGFILE"
+
+log() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOGFILE"
+}
+
+log "Starting Alfa hotspot helper"
+
+if ! command -v nmcli >/dev/null 2>&1; then
+  log "ERROR: nmcli not found. Install NetworkManager first."
+  exit 1
+fi
+
+if ! ip link show "$IFACE" >/dev/null 2>&1; then
+  log "ERROR: Interface $IFACE not found. Is the Alfa dongle connected?"
+  exit 1
+fi
+
+log "Found interface $IFACE"
+
+nmcli radio wifi on || true
+nmcli device set "$IFACE" managed yes || true
+
+if nmcli -t -f NAME connection show | grep -Fxq "$CON_NAME"; then
+  log "Connection $CON_NAME already exists"
+else
+  log "Creating hotspot connection $CON_NAME on $IFACE"
+  nmcli connection add type wifi ifname "$IFACE" con-name "$CON_NAME" autoconnect yes ssid "$SSID"
+  nmcli connection modify "$CON_NAME" \
+    802-11-wireless.mode ap \
+    802-11-wireless.band bg \
+    ipv4.method shared \
+    ipv6.method ignore \
+    wifi-sec.key-mgmt wpa-psk \
+    wifi-sec.psk "$PASSWORD"
+fi
+
+log "Bringing up hotspot connection $CON_NAME"
+nmcli connection up "$CON_NAME"
+
+IP_ADDR="$(ip -4 addr show "$IFACE" | awk '/inet / {print $2}' | head -n1 || true)"
+log "Hotspot active on $IFACE with IP ${IP_ADDR:-unknown}"
+```
+
+> Change `SSID` and `PASSWORD` in the script if you want a custom hotspot name or password.
 
 ---
 
@@ -193,9 +281,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=user
-WorkingDirectory=/home/user/Desktop/rf-viewer-v2
-ExecStart=/usr/bin/node /home/user/Desktop/rf-viewer-v2/server.js
+User=misterm
+WorkingDirectory=/home/misterm/Desktop/rf-viewer-v2
+ExecStart=/usr/bin/node /home/misterm/Desktop/rf-viewer-v2/server.js
 Restart=always
 RestartSec=3
 
@@ -232,8 +320,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=misterm
-WorkingDirectory=/home/user/Desktop/rf-viewer-v2
-ExecStart=/home/user/Desktop/rf-viewer-v2/scanner/rf-viewer-stream.sh
+WorkingDirectory=/home/misterm/Desktop/rf-viewer-v2
+ExecStart=/home/misterm/Desktop/rf-viewer-v2/scanner/rf-viewer-stream.sh 127.0.0.1 9001
 Restart=always
 RestartSec=3
 
@@ -257,20 +345,14 @@ Optional hotspot service for the Alfa dongle.
 
 ## Alfa Hotspot Setup
 
-### Hotspot Script
+### Copy the Repo Script Into Place
 
-Create:
+After cloning or pulling the repo:
 
 ```bash
-sudo nano /usr/local/bin/start-alfa-hotspot.sh
+sudo cp ~/Desktop/rf-viewer-v2/scripts/start-alfa-hotspot.sh /usr/local/bin/start-alfa-hotspot.sh
 sudo chmod +x /usr/local/bin/start-alfa-hotspot.sh
 ```
-
-This script should:
-
-- check for the Alfa dongle on `wlan1`
-- bring up the hotspot if present
-- leave Ethernet and built-in Wi-Fi alone
 
 ### Hotspot Service
 
@@ -280,6 +362,24 @@ Create:
 sudo nano /etc/systemd/system/alfa-hotspot.service
 ```
 
+Example:
+
+```ini
+[Unit]
+Description=RF Viewer Alfa Hotspot
+After=network-online.target NetworkManager.service
+Wants=network-online.target
+Requires=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/start-alfa-hotspot.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
 Enable and start:
 
 ```bash
@@ -287,6 +387,12 @@ sudo systemctl daemon-reload
 sudo systemctl enable alfa-hotspot.service
 sudo systemctl start alfa-hotspot.service
 ```
+
+This service should:
+
+- check for the Alfa dongle on `wlan1`
+- bring up the hotspot if present
+- leave Ethernet and built-in Wi-Fi alone
 
 ---
 
@@ -343,6 +449,14 @@ Restart only the scanner:
 sudo systemctl restart rf-viewer-scanner.service
 ```
 
+If you update the repo version of the hotspot script, copy it over again before restarting the hotspot service:
+
+```bash
+sudo cp ~/Desktop/rf-viewer-v2/scripts/start-alfa-hotspot.sh /usr/local/bin/start-alfa-hotspot.sh
+sudo chmod +x /usr/local/bin/start-alfa-hotspot.sh
+sudo systemctl restart alfa-hotspot.service
+```
+
 Check service status:
 
 ```bash
@@ -380,12 +494,13 @@ Project files:
 ~/Desktop/rf-viewer-v2/public/index.html
 ~/Desktop/rf-viewer-v2/public/js/app.js
 ~/Desktop/rf-viewer-v2/scanner/rf-viewer-stream.sh
+~/Desktop/rf-viewer-v2/scripts/start-alfa-hotspot.sh
 ~/Desktop/rf-viewer-v2/settings.json
 ~/Desktop/rf-viewer-v2/scanner.json
 ~/Desktop/rf-viewer-v2/scanner.runtime.json
 ```
 
-System scripts and services:
+Installed system files:
 
 ```text
 /usr/local/bin/start-alfa-hotspot.sh
@@ -484,6 +599,20 @@ nmcli device status
 iw dev
 ```
 
+Try manually bringing the hotspot up:
+
+```bash
+sudo /usr/local/bin/start-alfa-hotspot.sh
+```
+
+If you changed the repo version of the script but forgot to reinstall it, run:
+
+```bash
+sudo cp ~/Desktop/rf-viewer-v2/scripts/start-alfa-hotspot.sh /usr/local/bin/start-alfa-hotspot.sh
+sudo chmod +x /usr/local/bin/start-alfa-hotspot.sh
+sudo systemctl restart alfa-hotspot.service
+```
+
 ---
 
 ## Reboot Test
@@ -514,6 +643,7 @@ After reboot, verify:
 - Ethernet can stay connected without affecting the hotspot
 - the viewer runs on the Pi, so client devices only need the URL
 - the scanner feeds the Node app locally through port `9001`
+- the hotspot helper script lives in the repo under `scripts/` and gets copied into `/usr/local/bin/` for `systemd`
 
 ---
 
@@ -523,7 +653,7 @@ If everything is working, this should all be true:
 
 - hotspot is visible from another device
 - another device can join the hotspot
-- `ssh user@<hotspot-ip>` works
+- `ssh misterm@<hotspot-ip>` works
 - `http://<hotspot-ip>:3000` loads the viewer
 - `/api/live` shows rows
 - `/api/scanner` shows the correct mode
