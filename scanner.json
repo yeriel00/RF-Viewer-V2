@@ -1,0 +1,18 @@
+{
+  "mode": "survey",
+  "freqRange": "902M:928M:50k",
+  "interval": "2s",
+  "window": "10s",
+  "survey": {
+    "freqRange": "902M:928M:50k",
+    "interval": "2s",
+    "window": "10s"
+  },
+  "track": {
+    "centerHz": 907000000,
+    "spanHz": 200000,
+    "binHz": 10000,
+    "interval": "1s",
+    "window": "4s"
+  }
+}

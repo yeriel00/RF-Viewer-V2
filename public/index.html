@@ -1,0 +1,565 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>RF Viewer V2</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 24px;
+      background: #111;
+      color: #eee;
+    }
+
+    h1 { margin-top: 0; }
+    h3 { margin: 0; }
+
+    .row {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .card {
+      background: #1b1b1b;
+      border: 1px solid #333;
+      border-radius: 12px;
+      padding: 14px;
+      margin-top: 16px;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .card-header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .collapse-btn {
+      background: #222;
+      color: #eee;
+      border: 1px solid #444;
+      padding: 6px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      min-width: 42px;
+    }
+
+    .card-body {
+      margin-top: 14px;
+    }
+
+    .card.collapsed .card-body {
+      display: none;
+    }
+
+    select, button, input[type="number"], input[type="text"] {
+      background: #222;
+      color: #eee;
+      border: 1px solid #444;
+      padding: 8px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    input[type="checkbox"] {
+      transform: translateY(1px);
+    }
+
+    canvas {
+      width: 100%;
+      max-width: 100%;
+      background: #0d0d0d;
+      border-radius: 8px;
+      border: 1px solid #333;
+      cursor: crosshair;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+      font-size: 14px;
+    }
+
+    td, th {
+      padding: 8px;
+      border-bottom: 1px solid #2a2a2a;
+      text-align: left;
+    }
+
+    .muted { color: #aaa; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+
+    .settings-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      align-items: end;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .field label {
+      font-size: 13px;
+      color: #aaa;
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid #444;
+      background: #181818;
+      font-size: 12px;
+      color: #bbb;
+    }
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(2px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms ease;
+    }
+
+    .overlay.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .overlay-card {
+      min-width: 240px;
+      max-width: 90vw;
+      background: rgba(24, 24, 24, 0.96);
+      border: 1px solid #3a3a3a;
+      border-radius: 14px;
+      padding: 18px 20px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+    }
+
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border-radius: 999px;
+      border: 2px solid #3e3e3e;
+      border-top-color: #eaeaea;
+      animation: spin 0.8s linear infinite;
+      flex: 0 0 auto;
+    }
+
+    .overlay-text {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .overlay-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #f2f2f2;
+    }
+
+    .overlay-subtitle {
+      font-size: 12px;
+      color: #aaa;
+    }
+
+    .proximity-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      align-items: end;
+    }
+
+    .meter-wrap {
+      margin-top: 8px;
+    }
+
+    .meter-label-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+
+    .meter-track {
+      width: 100%;
+      height: 18px;
+      border-radius: 999px;
+      border: 1px solid #3a3a3a;
+      background: linear-gradient(90deg, #1d2a44 0%, #2d4b2d 50%, #5c2a2a 100%);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .meter-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.25);
+      transition: width 160ms ease;
+    }
+
+    .big-readout {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    .trend-hotter { color: #7fe08a; }
+    .trend-colder { color: #7fb2ff; }
+    .trend-steady { color: #ddd; }
+
+    .mode-track {
+      border-color: #4a6a4a !important;
+      box-shadow: 0 0 0 1px rgba(127, 224, 138, 0.12) inset;
+    }
+
+    .mode-survey {
+      border-color: #333 !important;
+      box-shadow: none;
+    }
+
+    .mode-paused {
+      border-color: #7a5a2a !important;
+      box-shadow: 0 0 0 1px rgba(255, 210, 127, 0.12) inset;
+    }
+
+    .status-good { color: #7fe08a; }
+    .status-warn { color: #ffd27f; }
+    .status-bad { color: #ff8a8a; }
+
+    #modeBadge.track {
+      background: #1f3322;
+      border-color: #3f6d47;
+      color: #9df0ab;
+    }
+
+    #modeBadge.survey {
+      background: #181818;
+      border-color: #444;
+      color: #bbb;
+    }
+
+    #modeBadge.paused {
+      background: #33281a;
+      border-color: #6f5630;
+      color: #ffd27f;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <h1>RF Viewer V2</h1>
+
+  <div class="row">
+    <label for="fileSelect">Source:</label>
+    <select id="fileSelect"></select>
+    <label><input type="checkbox" id="liveMode" checked> Auto refresh</label>
+    <button id="recordBtn">Record</button>
+    <button id="stopBtn">Stop</button>
+    <button id="trackBtn">Track selected</button>
+    <button id="surveyBtn">Back to survey</button>
+    <button id="pauseBtn">Pause scanner</button>
+    <span class="muted" id="recordStatus"></span>
+    <span class="muted" id="status"></span>
+    <span class="muted" id="scannerStatus"></span>
+  </div>
+
+  <div class="row" id="modeBannerRow" style="margin-top: 12px;">
+    <span class="pill survey" id="modeBadge">SURVEY MODE</span>
+    <span class="pill" id="lockedFreqBadge">No lock</span>
+    <span class="muted status-good" id="uiMessage">Ready</span>
+  </div>
+
+  <div class="card mode-survey" data-card>
+    <div class="card-header" data-collapse-toggle>
+      <h3>Settings</h3>
+      <div class="card-header-right">
+        <span class="muted">Filter and viewer config</span>
+        <button class="collapse-btn" type="button" aria-label="Toggle section">−</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="settings-grid">
+        <div class="field">
+          <label for="relativeSquelch">Relative squelch (dB over median)</label>
+          <input id="relativeSquelch" type="number" step="1" min="0" max="50" />
+        </div>
+
+        <div class="field">
+          <label for="absoluteFloor">Absolute floor (dB)</label>
+          <input id="absoluteFloor" type="number" step="1" min="-120" max="20" />
+        </div>
+
+        <div class="field">
+          <label for="minRepeats">Minimum repeats</label>
+          <select id="minRepeats">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="clusterWidthHz">Cluster width</label>
+          <select id="clusterWidthHz">
+            <option value="25000">25 kHz</option>
+            <option value="50000">50 kHz</option>
+            <option value="100000">100 kHz</option>
+            <option value="200000">200 kHz</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>&nbsp;</label>
+          <button id="applySettingsBtn">Apply</button>
+        </div>
+
+        <div class="field">
+          <label>&nbsp;</label>
+          <button id="saveSettingsBtn">Save defaults</button>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top: 12px;">
+        <span class="pill" id="viewerOrigin"></span>
+        <span class="muted" id="settingsStatus"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mode-survey" data-card>
+    <div class="card-header" data-collapse-toggle>
+      <h3>Scanner</h3>
+      <div class="card-header-right">
+        <span class="muted">Survey and track range control</span>
+        <button class="collapse-btn" type="button" aria-label="Toggle section">−</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="settings-grid">
+        <div class="field">
+          <label for="surveyStartMHz" title="Start frequency in MHz, like 402.000">Survey start (MHz)</label>
+          <input id="surveyStartMHz" type="text" inputmode="decimal" title="Start frequency in MHz, like 402.000" />
+        </div>
+
+        <div class="field">
+          <label for="surveyStopMHz" title="Stop frequency in MHz, like 528.000">Survey stop (MHz)</label>
+          <input id="surveyStopMHz" type="text" inputmode="decimal" title="Stop frequency in MHz, like 528.000" />
+        </div>
+
+        <div class="field">
+          <label for="surveyBinKhz" title="Bin size in kHz, like 50">Survey bin (kHz)</label>
+          <input id="surveyBinKhz" type="number" step="1" min="1" title="Bin size in kHz, like 50" />
+        </div>
+
+        <div class="field">
+          <label for="surveyInterval" title="rtl_power reporting interval, like 2s">Survey interval</label>
+          <input id="surveyInterval" type="text" title="rtl_power reporting interval, like 2s" />
+        </div>
+
+        <div class="field">
+          <label for="surveyWindow" title="How long each survey pass runs, like 10s">Survey window</label>
+          <input id="surveyWindow" type="text" title="How long each survey pass runs, like 10s" />
+        </div>
+
+        <div class="field">
+          <label for="trackSpanKhz" title="Track span width in kHz, like 200">Track span (kHz)</label>
+          <input id="trackSpanKhz" type="number" step="1" min="1" title="Track span width in kHz, like 200" />
+        </div>
+
+        <div class="field">
+          <label for="trackBinKhz" title="Track bin size in kHz, like 10">Track bin (kHz)</label>
+          <input id="trackBinKhz" type="number" step="1" min="1" title="Track bin size in kHz, like 10" />
+        </div>
+
+        <div class="field">
+          <label for="trackInterval">Track interval</label>
+          <input id="trackInterval" type="text" />
+        </div>
+
+        <div class="field">
+          <label for="trackWindow">Track window</label>
+          <input id="trackWindow" type="text" />
+        </div>
+
+        <div class="field">
+          <label>&nbsp;</label>
+          <button id="runScannerBtn">Run scanner config</button>
+        </div>
+
+        <div class="field">
+          <label>&nbsp;</label>
+          <button id="saveScannerBtn">Save scanner config</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mode-survey" data-card>
+    <div class="card-header" data-collapse-toggle>
+      <h3>Proximity</h3>
+      <div class="card-header-right">
+        <span class="muted">Track-mode hot/cold feedback</span>
+        <button class="collapse-btn" type="button" aria-label="Toggle section">−</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="proximity-grid">
+        <div class="field">
+          <label><input type="checkbox" id="proximityEnabled"> Proximity mode</label>
+        </div>
+
+        <div class="field">
+          <label><input type="checkbox" id="audioEnabled"> Audio beeps</label>
+        </div>
+
+        <div class="field">
+          <label for="smoothingCount">Smoothing samples</label>
+          <select id="smoothingCount">
+            <option value="3">3</option>
+            <option value="5" selected>5</option>
+            <option value="7">7</option>
+            <option value="9">9</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="historyCount">History window</label>
+          <select id="historyCount">
+            <option value="10">10</option>
+            <option value="20" selected>20</option>
+            <option value="30">30</option>
+            <option value="50">50</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="meter-wrap">
+        <div class="meter-label-row">
+          <div>
+            <div class="muted">Target</div>
+            <div id="proximityTarget">No target selected</div>
+          </div>
+          <div>
+            <div class="muted">Trend</div>
+            <div id="proximityTrend" class="big-readout trend-steady">STEADY</div>
+          </div>
+          <div>
+            <div class="muted">Strength</div>
+            <div id="proximityStrength" class="big-readout">0%</div>
+          </div>
+        </div>
+
+        <div class="meter-track">
+          <div id="proximityMeterFill" class="meter-fill"></div>
+        </div>
+
+        <div class="row" style="margin-top: 10px;">
+          <span class="pill" id="proximityCurrentDb">Current: -- dB</span>
+          <span class="pill" id="proximityPeakDb">Peak: -- dB</span>
+          <span class="pill" id="proximityModeState">Idle</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mode-survey" data-card>
+    <div class="card-header" data-collapse-toggle>
+      <h3>Summary</h3>
+      <div class="card-header-right">
+        <span class="muted">Current dataset overview</span>
+        <button class="collapse-btn" type="button" aria-label="Toggle section">−</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="grid" id="summary"></div>
+    </div>
+  </div>
+
+  <div class="card mode-survey" data-card>
+    <div class="card-header" data-collapse-toggle>
+      <h3>Spectrum</h3>
+      <div class="card-header-right">
+        <span class="muted">Click to inspect frequency</span>
+        <button class="collapse-btn" type="button" aria-label="Toggle section">−</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <canvas id="chart" width="1200" height="300"></canvas>
+      <div class="muted" id="clickedFreq" style="margin-top: 10px;">Click spectrum to inspect frequency</div>
+    </div>
+  </div>
+
+  <div class="card mode-survey" data-card>
+    <div class="card-header" data-collapse-toggle>
+      <h3>Detected Peaks</h3>
+      <div class="card-header-right">
+        <span class="muted">Filtered signal hits</span>
+        <button class="collapse-btn" type="button" aria-label="Toggle section">−</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Peak Freq</th>
+            <th>Peak dB</th>
+            <th>Median dB</th>
+            <th>Row Range</th>
+          </tr>
+        </thead>
+        <tbody id="eventsBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="busyOverlay" class="overlay" aria-hidden="true">
+    <div class="overlay-card">
+      <div class="spinner"></div>
+      <div class="overlay-text">
+        <div id="busyTitle" class="overlay-title">Working…</div>
+        <div id="busySubtitle" class="overlay-subtitle">Please wait</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
