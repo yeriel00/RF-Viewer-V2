@@ -36,6 +36,24 @@ const trackWindow = document.getElementById("trackWindow");
 const runScannerBtn = document.getElementById("runScannerBtn");
 const saveScannerBtn = document.getElementById("saveScannerBtn");
 
+const listenFrequency = document.getElementById("listenFrequency");
+const listenModulation = document.getElementById("listenModulation");
+const listenGain = document.getElementById("listenGain");
+const listenSquelch = document.getElementById("listenSquelch");
+const listenStartBtn = document.getElementById("listenStartBtn");
+const listenStopBtn = document.getElementById("listenStopBtn");
+const listenStatus = document.getElementById("listenStatus");
+
+const listenBrowserAudio = document.getElementById("listenBrowserAudio");
+const playBrowserAudioBtn = document.getElementById("playBrowserAudioBtn");
+const stopBrowserAudioBtn = document.getElementById("stopBrowserAudioBtn");
+const listenPipelineStatus = document.getElementById("listenPipelineStatus");
+const listenPipelineStateBadge = document.getElementById("listenPipelineStateBadge");
+const listenClientCountBadge = document.getElementById("listenClientCountBadge");
+const listenAudioMetaBadge = document.getElementById("listenAudioMetaBadge");
+const listenPipelineMeta = document.getElementById("listenPipelineMeta");
+const listenLog = document.getElementById("listenLog");
+
 const proximityEnabled = document.getElementById("proximityEnabled");
 const audioEnabled = document.getElementById("audioEnabled");
 const smoothingCount = document.getElementById("smoothingCount");
@@ -57,11 +75,14 @@ const busyTitle = document.getElementById("busyTitle");
 const busySubtitle = document.getElementById("busySubtitle");
 
 let refreshTimer = null;
+let diagnosticsTimer = null;
 let currentTrace = [];
 let currentSettings = null;
 let currentScanner = null;
 let selectedHz = null;
 let waitingForFreshScan = false;
+let currentListenPipeline = null;
+let browserAudioActive = false;
 
 let trackedStrengthHistory = [];
 let smoothedStrengthHistory = [];
@@ -77,6 +98,16 @@ let lastHitTimestampMs = 0;
 
 function fmtHz(hz) {
   return (hz / 1e6).toFixed(3) + " MHz";
+}
+
+function hzToMString(hz) {
+  return `${(Number(hz) / 1e6).toFixed(4).replace(/0+$/, "").replace(/\.$/, "")}M`;
+}
+
+function guessListenModulationFromHz(hz) {
+  const mhz = Number(hz) / 1e6;
+  if (Number.isFinite(mhz) && mhz >= 88 && mhz <= 108) return "wbfm";
+  return "fm";
 }
 
 function summaryItem(label, value) {
@@ -103,6 +134,22 @@ function setUiMessage(message, level = "good") {
   if (level === "bad") uiMessage.classList.add("status-bad");
 }
 
+function setListenStatus(message, level = "good") {
+  listenStatus.textContent = message;
+  listenStatus.className = "muted";
+  if (level === "good") listenStatus.classList.add("status-good");
+  if (level === "warn") listenStatus.classList.add("status-warn");
+  if (level === "bad") listenStatus.classList.add("status-bad");
+}
+
+function setListenPipelineStatus(message, level = "good") {
+  listenPipelineStatus.textContent = message;
+  listenPipelineStatus.className = "muted";
+  if (level === "good") listenPipelineStatus.classList.add("status-good");
+  if (level === "warn") listenPipelineStatus.classList.add("status-warn");
+  if (level === "bad") listenPipelineStatus.classList.add("status-bad");
+}
+
 function updatePauseButton() {
   if (currentScanner && currentScanner.mode === "paused") {
     pauseBtn.textContent = "Resume scanner";
@@ -116,7 +163,7 @@ function updateModeUi() {
 
   if (currentScanner && currentScanner.mode === "track") {
     modeBadge.textContent = "TRACK MODE ACTIVE";
-    modeBadge.classList.remove("survey", "paused");
+    modeBadge.classList.remove("survey", "paused", "listen");
     modeBadge.classList.add("track");
 
     const centerHz = Number(currentScanner.track?.centerHz);
@@ -125,12 +172,12 @@ function updateModeUi() {
       : "Locked: unknown";
 
     cards.forEach(card => {
-      card.classList.remove("mode-survey", "mode-paused");
+      card.classList.remove("mode-survey", "mode-paused", "mode-listen");
       card.classList.add("mode-track");
     });
   } else if (currentScanner && currentScanner.mode === "paused") {
     modeBadge.textContent = "SCANNER PAUSED";
-    modeBadge.classList.remove("survey", "track");
+    modeBadge.classList.remove("survey", "track", "listen");
     modeBadge.classList.add("paused");
 
     if (currentScanner.lastActiveMode === "track" && currentScanner.track?.centerHz) {
@@ -140,18 +187,30 @@ function updateModeUi() {
     }
 
     cards.forEach(card => {
-      card.classList.remove("mode-survey", "mode-track");
+      card.classList.remove("mode-survey", "mode-track", "mode-listen");
       card.classList.add("mode-paused");
+    });
+  } else if (currentScanner && currentScanner.mode === "listen") {
+    modeBadge.textContent = "LISTEN MODE";
+    modeBadge.classList.remove("survey", "track", "paused");
+    modeBadge.classList.add("listen");
+
+    const freq = currentScanner.listen?.frequency || currentScanner.targetFrequency;
+    lockedFreqBadge.textContent = freq ? `Listening: ${freq}` : "Listening";
+
+    cards.forEach(card => {
+      card.classList.remove("mode-survey", "mode-track", "mode-paused");
+      card.classList.add("mode-listen");
     });
   } else {
     modeBadge.textContent = "SURVEY MODE";
-    modeBadge.classList.remove("track", "paused");
+    modeBadge.classList.remove("track", "paused", "listen");
     modeBadge.classList.add("survey");
 
     lockedFreqBadge.textContent = "No lock";
 
     cards.forEach(card => {
-      card.classList.remove("mode-track", "mode-paused");
+      card.classList.remove("mode-track", "mode-paused", "mode-listen");
       card.classList.add("mode-survey");
     });
   }
@@ -192,6 +251,12 @@ function parseLooseFrequencyToMHz(input) {
   if (value >= 1e8) return value / 1e6;
   if (value >= 1e5) return value / 1000;
   return value;
+}
+
+function normalizeFrequencyInput(input) {
+  const mhz = parseLooseFrequencyToMHz(input);
+  if (mhz == null || !Number.isFinite(mhz) || mhz <= 0) return null;
+  return `${mhz.toFixed(4).replace(/0+$/, "").replace(/\.$/, "")}M`;
 }
 
 function formatSurveyRange(startMHz, stopMHz, binKhz) {
@@ -650,6 +715,125 @@ function populateSettings(settings) {
   viewerOrigin.textContent = `Viewer: ${window.location.origin}`;
 }
 
+function stopBrowserAudio(resetStatus = true) {
+  try {
+    listenBrowserAudio.pause();
+  } catch (_) {}
+
+  browserAudioActive = false;
+
+  try {
+    listenBrowserAudio.removeAttribute("src");
+    listenBrowserAudio.load();
+  } catch (_) {}
+
+  if (resetStatus) {
+    setListenPipelineStatus("Browser audio stopped", "good");
+  }
+}
+
+function ensureBrowserAudioSrc(forceRefresh = false) {
+  const shouldHaveStream =
+    currentScanner &&
+    currentScanner.mode === "listen" &&
+    currentScanner.listen &&
+    currentScanner.listen.enabled;
+
+  if (!shouldHaveStream) return false;
+
+  const nextSrc = `/api/listen/audio?t=${Date.now()}`;
+  if (forceRefresh || !listenBrowserAudio.getAttribute("src")) {
+    listenBrowserAudio.src = nextSrc;
+  }
+  return true;
+}
+
+async function playBrowserAudio() {
+  if (!currentScanner || currentScanner.mode !== "listen") {
+    setListenPipelineStatus("Start listen mode first", "warn");
+    return;
+  }
+
+  ensureBrowserAudioSrc(true);
+
+  try {
+    await listenBrowserAudio.play();
+    browserAudioActive = true;
+    setListenPipelineStatus("Browser audio playing", "good");
+  } catch (err) {
+    browserAudioActive = false;
+    setListenPipelineStatus(`Browser audio failed: ${err.message}`, "bad");
+  }
+}
+
+function renderListenLog(lines) {
+  if (!Array.isArray(lines) || !lines.length) {
+    listenLog.textContent = "No log entries yet.";
+    return;
+  }
+  listenLog.textContent = lines.join("\n");
+  listenLog.scrollTop = listenLog.scrollHeight;
+}
+
+function renderListenPipeline(status) {
+  currentListenPipeline = status || null;
+
+  if (!status) {
+    listenPipelineStateBadge.textContent = "State: idle";
+    listenClientCountBadge.textContent = "Clients: 0";
+    listenAudioMetaBadge.textContent = "Audio: --";
+    listenPipelineMeta.textContent = "No pipeline info yet";
+    setListenPipelineStatus("Pipeline idle", "good");
+    return;
+  }
+
+  const state = status.state || "unknown";
+  const stateLabel = `State: ${state}`;
+  const clientCount = Number(status.clients || 0);
+  const freq = status.frequency || "--";
+  const mod = status.modulation || "--";
+  const sampleRate = status.sampleRate ? `${status.sampleRate} Hz` : "--";
+  const device = status.audioDevice || "--";
+
+  listenPipelineStateBadge.textContent = stateLabel;
+  listenClientCountBadge.textContent = `Clients: ${clientCount}`;
+  listenAudioMetaBadge.textContent = `Audio: ${mod} / ${sampleRate}`;
+
+  listenPipelineMeta.textContent =
+    `Freq: ${freq} | Device: ${device} | Updated: ${status.updatedAt || "--"}`;
+
+  if (state === "running") {
+    setListenPipelineStatus(status.message || "Pipeline running", "good");
+  } else if (state === "starting") {
+    setListenPipelineStatus(status.message || "Pipeline starting", "warn");
+  } else if (state === "error") {
+    setListenPipelineStatus(status.message || "Pipeline error", "bad");
+  } else {
+    setListenPipelineStatus(status.message || "Pipeline idle", "good");
+  }
+}
+
+async function loadListenDiagnostics() {
+  try {
+    const [statusData, logData] = await Promise.all([
+      fetchJson("/api/listen/status"),
+      fetchJson("/api/listen/log")
+    ]);
+
+    renderListenPipeline(statusData.status);
+    renderListenLog(logData.lines);
+
+    if (
+      (!currentScanner || currentScanner.mode !== "listen") &&
+      browserAudioActive
+    ) {
+      stopBrowserAudio(false);
+    }
+  } catch (err) {
+    setListenPipelineStatus(`Diagnostics failed: ${err.message}`, "bad");
+  }
+}
+
 function populateScanner(scanner) {
   currentScanner = scanner;
 
@@ -666,12 +850,34 @@ function populateScanner(scanner) {
   trackInterval.value = scanner.track?.interval || "";
   trackWindow.value = scanner.track?.window || "";
 
-  scannerStatus.textContent = scanner.mode === "paused"
-    ? `Mode: paused | resume: ${scanner.lastActiveMode || "survey"}`
-    : `Mode: ${scanner.mode} | ${scanner.freqRange}`;
+  listenFrequency.value = scanner.listen?.frequency || scanner.targetFrequency || "";
+  listenModulation.value = scanner.listen?.modulation || "fm";
+  listenGain.value = Number(scanner.listen?.gain ?? 30);
+  listenSquelch.value = Number(scanner.listen?.squelch ?? 0);
+
+  if (scanner.mode === "paused") {
+    scannerStatus.textContent = `Mode: paused | resume: ${scanner.lastActiveMode || "survey"}`;
+  } else if (scanner.mode === "listen") {
+    scannerStatus.textContent = `Mode: listen | ${scanner.listen?.frequency || scanner.targetFrequency || "no frequency"}`;
+  } else {
+    scannerStatus.textContent = `Mode: ${scanner.mode} | ${scanner.freqRange}`;
+  }
 
   if (scanner.mode === "track" && scanner.track && Number.isFinite(Number(scanner.track.centerHz))) {
     selectedHz = Number(scanner.track.centerHz);
+  }
+
+  if (scanner.mode === "listen") {
+    const freq = scanner.listen?.frequency || scanner.targetFrequency;
+    setListenStatus(
+      freq
+        ? `Listening on ${freq} (${scanner.listen?.modulation || "fm"}) - browser stream available`
+        : "Listen mode active",
+      "good"
+    );
+  } else {
+    setListenStatus("Not listening", "good");
+    if (browserAudioActive) stopBrowserAudio(false);
   }
 
   updateModeUi();
@@ -748,6 +954,7 @@ async function runScannerConfig() {
     populateScanner(data.scanner);
     setUiMessage(`Scanner running: ${data.scanner.freqRange}`, "good");
     setTimeout(loadCurrent, 2500);
+    setTimeout(loadListenDiagnostics, 500);
   } catch (err) {
     setUiMessage(`Run scanner failed: ${err.message}`, "bad");
   } finally {
@@ -783,6 +990,7 @@ async function saveScannerConfig() {
     populateScanner(data.scanner);
     setUiMessage(`Scanner config saved: ${data.scanner.freqRange}`, "good");
     setTimeout(loadCurrent, 2500);
+    setTimeout(loadListenDiagnostics, 500);
   } catch (err) {
     setUiMessage(`Save scanner failed: ${err.message}`, "bad");
   } finally {
@@ -798,8 +1006,10 @@ async function setSurveyMode() {
   try {
     const data = await fetchJson("/api/scanner/survey", { method: "POST" });
     populateScanner(data.scanner);
+    stopBrowserAudio(false);
     setUiMessage("Survey mode active", "good");
     setTimeout(loadCurrent, 2500);
+    setTimeout(loadListenDiagnostics, 500);
   } catch (err) {
     setUiMessage(`Survey mode failed: ${err.message}`, "bad");
   } finally {
@@ -840,8 +1050,10 @@ async function setTrackMode() {
     lastAlertPeakDb = null;
     lastLockTargetHz = Number(data.scanner.track.centerHz);
 
+    stopBrowserAudio(false);
     setUiMessage(`Track mode active at ${fmtHz(lastLockTargetHz)}`, "good");
     setTimeout(loadCurrent, 2500);
+    setTimeout(loadListenDiagnostics, 500);
   } catch (err) {
     setUiMessage(`Track mode failed: ${err.message}`, "bad");
   } finally {
@@ -860,6 +1072,7 @@ async function togglePauseScanner() {
       populateScanner(data.scanner);
       setUiMessage(`Scanner resumed in ${data.scanner.mode} mode`, "good");
       setTimeout(loadCurrent, 2500);
+      setTimeout(loadListenDiagnostics, 500);
     } catch (err) {
       setUiMessage(`Resume failed: ${err.message}`, "bad");
     } finally {
@@ -875,9 +1088,74 @@ async function togglePauseScanner() {
   try {
     const data = await fetchJson("/api/scanner/pause", { method: "POST" });
     populateScanner(data.scanner);
+    stopBrowserAudio(false);
     setUiMessage("Scanner paused", "good");
+    setTimeout(loadListenDiagnostics, 500);
   } catch (err) {
     setUiMessage(`Pause failed: ${err.message}`, "bad");
+  } finally {
+    hideBusy();
+  }
+}
+
+async function startListenMode() {
+  const normalizedFreq = normalizeFrequencyInput(listenFrequency.value);
+  const modulation = String(listenModulation.value || "fm").toLowerCase();
+  const gain = Number(listenGain.value);
+  const squelch = Number(listenSquelch.value);
+
+  if (!normalizedFreq) {
+    setListenStatus("Enter a valid frequency like 162.55M or 99.5M", "bad");
+    setUiMessage("Invalid listen frequency", "bad");
+    return;
+  }
+
+  listenFrequency.value = normalizedFreq;
+
+  beginScannerTransition(`Switching to listen on ${normalizedFreq}...`);
+  showBusy("Starting listen mode", `Tuning ${normalizedFreq}`);
+  setUiMessage(`Starting listen mode on ${normalizedFreq}...`, "warn");
+  setListenStatus(`Starting listen mode on ${normalizedFreq}...`, "warn");
+
+  try {
+    const data = await fetchJson("/api/listen/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        frequency: normalizedFreq,
+        modulation,
+        gain,
+        squelch
+      })
+    });
+
+    populateScanner(data.scanner);
+    setUiMessage(`Listen mode active on ${data.scanner.listen.frequency}`, "good");
+    setTimeout(loadListenDiagnostics, 500);
+  } catch (err) {
+    setUiMessage(`Listen mode failed: ${err.message}`, "bad");
+    setListenStatus(`Listen start failed: ${err.message}`, "bad");
+  } finally {
+    hideBusy();
+  }
+}
+
+async function stopListenMode() {
+  showBusy("Stopping listen mode", "Returning to scanner");
+  setUiMessage("Stopping listen mode...", "warn");
+  setListenStatus("Stopping listen mode...", "warn");
+  beginScannerTransition("Returning to scan...");
+
+  try {
+    const data = await fetchJson("/api/listen/stop", { method: "POST" });
+    populateScanner(data.scanner);
+    stopBrowserAudio(false);
+    setUiMessage(`Returned to ${data.scanner.mode} mode`, "good");
+    setTimeout(loadCurrent, 2500);
+    setTimeout(loadListenDiagnostics, 500);
+  } catch (err) {
+    setUiMessage(`Stop listen failed: ${err.message}`, "bad");
+    setListenStatus(`Stop listen failed: ${err.message}`, "bad");
   } finally {
     hideBusy();
   }
@@ -917,6 +1195,11 @@ function updateTimer() {
   if (liveMode.checked && fileSelect.value === "live") {
     refreshTimer = setInterval(loadCurrent, 2000);
   }
+}
+
+function updateDiagnosticsTimer() {
+  if (diagnosticsTimer) clearInterval(diagnosticsTimer);
+  diagnosticsTimer = setInterval(loadListenDiagnostics, 2000);
 }
 
 async function refreshRecordStatus() {
@@ -970,6 +1253,10 @@ saveScannerBtn.addEventListener("click", saveScannerConfig);
 trackBtn.addEventListener("click", setTrackMode);
 surveyBtn.addEventListener("click", setSurveyMode);
 pauseBtn.addEventListener("click", togglePauseScanner);
+listenStartBtn.addEventListener("click", startListenMode);
+listenStopBtn.addEventListener("click", stopListenMode);
+playBrowserAudioBtn.addEventListener("click", playBrowserAudio);
+stopBrowserAudioBtn.addEventListener("click", () => stopBrowserAudio());
 
 proximityEnabled.addEventListener("change", () => {
   resetProximitySession();
@@ -979,6 +1266,29 @@ audioEnabled.addEventListener("change", () => {
   if (audioEnabled.checked) {
     ensureAudioContext();
   }
+});
+
+listenBrowserAudio.addEventListener("playing", () => {
+  browserAudioActive = true;
+  setListenPipelineStatus("Browser audio playing", "good");
+});
+
+listenBrowserAudio.addEventListener("pause", () => {
+  if (!listenBrowserAudio.ended && browserAudioActive) {
+    setListenPipelineStatus("Browser audio paused", "warn");
+  }
+});
+
+listenBrowserAudio.addEventListener("ended", () => {
+  browserAudioActive = false;
+  setListenPipelineStatus("Browser audio ended", "warn");
+});
+
+listenBrowserAudio.addEventListener("error", () => {
+  browserAudioActive = false;
+  const mediaError = listenBrowserAudio.error;
+  const message = mediaError ? `Browser audio error code ${mediaError.code}` : "Browser audio error";
+  setListenPipelineStatus(message, "bad");
 });
 
 canvas.addEventListener("click", (e) => {
@@ -1001,6 +1311,12 @@ canvas.addEventListener("click", (e) => {
   selectedHz = Math.round(hz);
   clickedFreq.textContent = `Selected: ${fmtHz(selectedHz)} (${selectedHz} Hz)`;
   proximityTarget.textContent = fmtHz(selectedHz);
+
+  listenFrequency.value = hzToMString(selectedHz);
+
+  if (listenModulation) {
+    listenModulation.value = guessListenModulationFromHz(selectedHz);
+  }
 
   if (currentScanner && currentScanner.mode === "track") {
     lockedFreqBadge.textContent = `Locked: ${fmtHz(selectedHz)}`;
@@ -1030,11 +1346,14 @@ window.addEventListener("unhandledrejection", (event) => {
   setUiMessage(`Async error: ${msg}`, "bad");
 });
 
-Promise.all([loadSettings(), loadScanner(), loadFiles()]).then(() => {
+Promise.all([loadSettings(), loadScanner(), loadFiles()]).then(async () => {
   updateTimer();
-  refreshRecordStatus();
+  updateDiagnosticsTimer();
+  await refreshRecordStatus();
+  await loadListenDiagnostics();
   updateProximityUI(null);
   updateModeUi();
+  setListenStatus("Not listening", "good");
   setUiMessage("Ready", "good");
   setInterval(refreshRecordStatus, 2000);
 });

@@ -3,6 +3,8 @@ const net = require("net");
 const fs = require("fs");
 const path = require("path");
 const url = require("url");
+const { spawn } = require("child_process");
+const { PassThrough } = require("stream");
 const { listFiles, parseFile, parseLine, buildDataset } = require("./parser");
 
 const PORT = 3000;
@@ -29,6 +31,7 @@ const DEFAULT_SETTINGS = {
 const DEFAULT_SCANNER = {
   mode: "survey",
   lastActiveMode: "survey",
+  targetFrequency: null,
   freqRange: "902M:928M:50k",
   interval: "2s",
   window: "10s",
@@ -43,8 +46,384 @@ const DEFAULT_SCANNER = {
     binHz: 10000,
     interval: "1s",
     window: "4s"
+  },
+  listen: {
+    enabled: false,
+    frequency: null,
+    modulation: "fm",
+    gain: 30,
+    squelch: 0
   }
 };
+
+let currentSettings = loadJsonFile(SETTINGS_FILE, DEFAULT_SETTINGS);
+let currentScanner = loadJsonFile(SCANNER_FILE, DEFAULT_SCANNER);
+
+/* -----------------------------
+   Shared browser/local listen pipeline
+----------------------------- */
+
+let listenRtlProc = null;
+let listenAplayProc = null;
+let listenFfmpegProc = null;
+let listenRawBus = null;
+let listenPipelineKey = null;
+const listenAudioClients = new Set();
+const listenLog = [];
+
+let listenStatus = {
+  active: false,
+  state: "idle",
+  message: "Not listening",
+  frequency: null,
+  modulation: null,
+  gain: null,
+  squelch: null,
+  sampleRate: null,
+  audioDevice: process.env.APLAY_DEVICE || "default",
+  clients: 0,
+  startedAt: null,
+  updatedAt: new Date().toISOString()
+};
+
+function appendListenLog(message) {
+  const line = `[${new Date().toISOString()}] ${message}`;
+  listenLog.push(line);
+  while (listenLog.length > 200) listenLog.shift();
+  console.log(line);
+}
+
+function setListenStatus(patch) {
+  listenStatus = {
+    ...listenStatus,
+    ...patch,
+    clients: listenAudioClients.size,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function getListenSampleRate(modulation) {
+  return modulation === "wbfm" ? 32000 : 24000;
+}
+
+function getListenPipelineKey(listen) {
+  return JSON.stringify({
+    frequency: listen.frequency,
+    modulation: listen.modulation,
+    gain: Number(listen.gain),
+    squelch: Number(listen.squelch)
+  });
+}
+
+function isChildAlive(child) {
+  return !!(child && !child.killed && child.exitCode == null);
+}
+
+function endListenAudioClients() {
+  for (const res of listenAudioClients) {
+    try {
+      if (!res.writableEnded) res.end();
+    } catch (_) {}
+  }
+  listenAudioClients.clear();
+  setListenStatus({});
+}
+
+function killChild(child, name) {
+  if (!child) return;
+  try {
+    child.kill("SIGTERM");
+  } catch (_) {}
+
+  setTimeout(() => {
+    try {
+      if (child.exitCode == null) child.kill("SIGKILL");
+    } catch (_) {}
+  }, 250);
+
+  if (name) {
+    appendListenLog(`Stopping ${name}`);
+  }
+}
+
+function stopListenAudioPipeline(reason = "Listen pipeline stopped") {
+  if (listenRawBus) {
+    try {
+      listenRawBus.destroy();
+    } catch (_) {}
+    listenRawBus = null;
+  }
+
+  if (listenAplayProc && listenAplayProc.stdin) {
+    try {
+      listenAplayProc.stdin.destroy();
+    } catch (_) {}
+  }
+
+  if (listenFfmpegProc && listenFfmpegProc.stdin) {
+    try {
+      listenFfmpegProc.stdin.destroy();
+    } catch (_) {}
+  }
+
+  killChild(listenRtlProc, "rtl_fm");
+  killChild(listenAplayProc, "aplay");
+  killChild(listenFfmpegProc, "ffmpeg");
+
+  listenRtlProc = null;
+  listenAplayProc = null;
+  listenFfmpegProc = null;
+  listenPipelineKey = null;
+
+  endListenAudioClients();
+
+  setListenStatus({
+    active: false,
+    state: "stopped",
+    message: reason,
+    startedAt: null
+  });
+}
+
+function startListenAudioPipeline(scanner) {
+  const listen = scanner.listen || {};
+  const frequency = listen.frequency || scanner.targetFrequency;
+  const modulation = String(listen.modulation || "fm").toLowerCase();
+  const gain = Number(listen.gain ?? 30);
+  const squelch = Number(listen.squelch ?? 0);
+
+  if (!frequency) {
+    setListenStatus({
+      active: false,
+      state: "error",
+      message: "No listen frequency set"
+    });
+    return false;
+  }
+
+  if (!["fm", "wbfm", "am"].includes(modulation)) {
+    setListenStatus({
+      active: false,
+      state: "error",
+      message: `Unsupported modulation: ${modulation}`
+    });
+    return false;
+  }
+
+  const nextKey = getListenPipelineKey({
+    frequency,
+    modulation,
+    gain,
+    squelch
+  });
+
+  if (
+    listenPipelineKey === nextKey &&
+    isChildAlive(listenRtlProc) &&
+    isChildAlive(listenAplayProc) &&
+    isChildAlive(listenFfmpegProc)
+  ) {
+    return true;
+  }
+
+  stopListenAudioPipeline("Restarting listen pipeline");
+
+  const sampleRate = getListenSampleRate(modulation);
+  const aplayDevice = process.env.APLAY_DEVICE || "default";
+
+  const rtlArgs = [
+    "-f", frequency,
+    "-M", modulation,
+    "-g", String(gain)
+  ];
+
+  if (modulation === "wbfm") {
+    rtlArgs.push("-E", "deemp");
+  } else {
+    rtlArgs.push(
+      "-l", String(squelch),
+      "-s", String(sampleRate),
+      "-r", String(sampleRate)
+    );
+  }
+
+  rtlArgs.push("-");
+
+  const ffmpegArgs = [
+    "-hide_banner",
+    "-loglevel", "warning",
+    "-f", "s16le",
+    "-ar", String(sampleRate),
+    "-ac", "1",
+    "-i", "pipe:0",
+    "-f", "mp3",
+    "-b:a", "128k",
+    "pipe:1"
+  ];
+
+  appendListenLog(
+    `Starting listen pipeline freq=${frequency} mod=${modulation} gain=${gain} squelch=${squelch} sampleRate=${sampleRate} device=${aplayDevice}`
+  );
+
+  listenRtlProc = spawn("rtl_fm", rtlArgs, {
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  listenAplayProc = spawn("aplay", [
+    "-D", aplayDevice,
+    "-r", String(sampleRate),
+    "-f", "S16_LE",
+    "-t", "raw",
+    "-c", "1"
+  ], {
+    stdio: ["pipe", "ignore", "pipe"]
+  });
+
+  listenFfmpegProc = spawn("ffmpeg", ffmpegArgs, {
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+
+  listenPipelineKey = nextKey;
+  listenRawBus = new PassThrough();
+
+  if (listenRtlProc.stdout) {
+    listenRtlProc.stdout.pipe(listenRawBus);
+  }
+
+  if (listenAplayProc.stdin) {
+    listenAplayProc.stdin.on("error", () => {});
+    listenRawBus.pipe(listenAplayProc.stdin);
+  }
+
+  if (listenFfmpegProc.stdin) {
+    listenFfmpegProc.stdin.on("error", () => {});
+    listenRawBus.pipe(listenFfmpegProc.stdin);
+  }
+
+  if (listenRtlProc.stderr) {
+    listenRtlProc.stderr.on("data", chunk => {
+      const text = chunk.toString().trim();
+      if (text) appendListenLog(`rtl_fm: ${text}`);
+    });
+  }
+
+  if (listenAplayProc.stderr) {
+    listenAplayProc.stderr.on("data", chunk => {
+      const text = chunk.toString().trim();
+      if (text) appendListenLog(`aplay: ${text}`);
+    });
+  }
+
+  if (listenFfmpegProc.stderr) {
+    listenFfmpegProc.stderr.on("data", chunk => {
+      const text = chunk.toString().trim();
+      if (text) appendListenLog(`ffmpeg: ${text}`);
+    });
+  }
+
+  if (listenFfmpegProc.stdout) {
+    listenFfmpegProc.stdout.on("data", chunk => {
+      if (!listenAudioClients.size) return;
+
+      for (const res of [...listenAudioClients]) {
+        try {
+          if (res.writableEnded) {
+            listenAudioClients.delete(res);
+            continue;
+          }
+          res.write(chunk);
+        } catch (_) {
+          listenAudioClients.delete(res);
+          try {
+            res.end();
+          } catch (_) {}
+        }
+      }
+      setListenStatus({});
+    });
+  }
+
+  listenRtlProc.on("close", code => {
+    appendListenLog(`rtl_fm exited with code ${code}`);
+    if (currentScanner.mode === "listen") {
+      setListenStatus({
+        active: false,
+        state: code === 0 ? "stopped" : "error",
+        message: code === 0 ? "rtl_fm exited" : `rtl_fm exited with code ${code}`
+      });
+    }
+  });
+
+  listenAplayProc.on("close", code => {
+    appendListenLog(`aplay exited with code ${code}`);
+  });
+
+  listenFfmpegProc.on("close", code => {
+    appendListenLog(`ffmpeg exited with code ${code}`);
+    if (currentScanner.mode === "listen") {
+      endListenAudioClients();
+      setListenStatus({
+        active: false,
+        state: code === 0 ? "stopped" : "error",
+        message: code === 0 ? "ffmpeg exited" : `ffmpeg exited with code ${code}`
+      });
+    }
+  });
+
+  listenRtlProc.on("error", err => {
+    appendListenLog(`rtl_fm spawn error: ${err.message}`);
+    setListenStatus({
+      active: false,
+      state: "error",
+      message: `rtl_fm spawn error: ${err.message}`
+    });
+  });
+
+  listenAplayProc.on("error", err => {
+    appendListenLog(`aplay spawn error: ${err.message}`);
+    setListenStatus({
+      active: false,
+      state: "error",
+      message: `aplay spawn error: ${err.message}`
+    });
+  });
+
+  listenFfmpegProc.on("error", err => {
+    appendListenLog(`ffmpeg spawn error: ${err.message}`);
+    setListenStatus({
+      active: false,
+      state: "error",
+      message: `ffmpeg spawn error: ${err.message}`
+    });
+  });
+
+  setListenStatus({
+    active: true,
+    state: "running",
+    message: "Listen audio pipeline running",
+    frequency,
+    modulation,
+    gain,
+    squelch,
+    sampleRate,
+    audioDevice: aplayDevice,
+    startedAt: new Date().toISOString()
+  });
+
+  return true;
+}
+
+function syncListenPipeline() {
+  if (currentScanner.mode === "listen" && currentScanner.listen?.enabled) {
+    startListenAudioPipeline(currentScanner);
+  } else {
+    stopListenAudioPipeline("Listen mode inactive");
+  }
+}
+
+/* -----------------------------
+   Core helpers
+----------------------------- */
 
 function loadJsonFile(file, fallback) {
   try {
@@ -61,9 +440,6 @@ function saveJsonFile(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
 
-let currentSettings = loadJsonFile(SETTINGS_FILE, DEFAULT_SETTINGS);
-let currentScanner = loadJsonFile(SCANNER_FILE, DEFAULT_SCANNER);
-
 function hzToM(hz) {
   return `${(hz / 1e6).toFixed(6)}M`;
 }
@@ -74,18 +450,48 @@ function buildTrackFreqRange(centerHz, spanHz, binHz) {
   return `${hzToM(start)}:${hzToM(stop)}:${Math.round(binHz)}`;
 }
 
+function normalizeFrequencyInput(value) {
+  if (value === null || value === undefined) return null;
+
+  const raw = String(value).trim().toUpperCase();
+  if (!raw) return null;
+
+  if (/^\d+(\.\d+)?[KMG]$/.test(raw)) return raw;
+
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    const num = Number(raw);
+    if (!Number.isFinite(num) || num <= 0) return null;
+
+    if (num < 1000000) return `${raw}M`;
+    return raw;
+  }
+
+  return null;
+}
+
 function normalizeScanner(scanner) {
   const out = JSON.parse(JSON.stringify({ ...DEFAULT_SCANNER, ...scanner }));
 
   if (!out.survey) out.survey = { ...DEFAULT_SCANNER.survey };
   if (!out.track) out.track = { ...DEFAULT_SCANNER.track };
+  if (!out.listen) out.listen = { ...DEFAULT_SCANNER.listen };
 
-  if (out.mode !== "paused" && out.mode !== "track") {
+  out.listen = {
+    ...DEFAULT_SCANNER.listen,
+    ...out.listen
+  };
+
+  if (!["survey", "track", "paused", "listen"].includes(out.mode)) {
     out.mode = "survey";
+  }
+
+  if (!["survey", "track"].includes(out.lastActiveMode)) {
+    out.lastActiveMode = "survey";
   }
 
   if (out.mode === "track") {
     out.lastActiveMode = "track";
+    out.listen.enabled = false;
     out.freqRange = buildTrackFreqRange(
       Number(out.track.centerHz),
       Number(out.track.spanHz),
@@ -94,15 +500,19 @@ function normalizeScanner(scanner) {
     out.interval = out.track.interval;
     out.window = out.track.window;
   } else if (out.mode === "paused") {
-    if (out.lastActiveMode !== "track" && out.lastActiveMode !== "survey") {
-      out.lastActiveMode = "survey";
-    }
+    out.listen.enabled = false;
+    out.freqRange = "";
+    out.interval = "";
+    out.window = "";
+  } else if (out.mode === "listen") {
+    out.listen.enabled = true;
     out.freqRange = "";
     out.interval = "";
     out.window = "";
   } else {
     out.mode = "survey";
     out.lastActiveMode = "survey";
+    out.listen.enabled = false;
     out.freqRange = out.survey.freqRange;
     out.interval = out.survey.interval;
     out.window = out.survey.window;
@@ -111,8 +521,13 @@ function normalizeScanner(scanner) {
   return out;
 }
 
-function writeRuntimeScanner(scanner) {
-  saveJsonFile(SCANNER_RUNTIME_FILE, scanner);
+function persistScanner(scanner, { clearRows = true } = {}) {
+  currentScanner = normalizeScanner(scanner);
+  saveJsonFile(SCANNER_FILE, currentScanner);
+  saveJsonFile(SCANNER_RUNTIME_FILE, currentScanner);
+  if (clearRows) clearLiveRows();
+  syncListenPipeline();
+  return currentScanner;
 }
 
 function clearLiveRows() {
@@ -125,7 +540,8 @@ function clearRecordedRows() {
 
 currentScanner = normalizeScanner(currentScanner);
 saveJsonFile(SCANNER_FILE, currentScanner);
-writeRuntimeScanner(currentScanner);
+saveJsonFile(SCANNER_RUNTIME_FILE, currentScanner);
+syncListenPipeline();
 
 function addLiveLine(line) {
   const parsed = parseLine(line);
@@ -182,9 +598,14 @@ function mergeScanner(current, incoming) {
     ...current,
     ...incoming,
     survey: { ...current.survey, ...(incoming.survey || {}) },
-    track: { ...current.track, ...(incoming.track || {}) }
+    track: { ...current.track, ...(incoming.track || {}) },
+    listen: { ...current.listen, ...(incoming.listen || {}) }
   });
 }
+
+/* -----------------------------
+   HTTP API
+----------------------------- */
 
 const webServer = http.createServer(async (req, res) => {
   const parsed = url.parse(req.url, true);
@@ -225,10 +646,7 @@ const webServer = http.createServer(async (req, res) => {
   if (req.method === "POST" && parsed.pathname === "/api/scanner/run") {
     try {
       const incoming = JSON.parse((await collectRequestBody(req)) || "{}");
-      currentScanner = mergeScanner(currentScanner, incoming);
-      saveJsonFile(SCANNER_FILE, currentScanner);
-      writeRuntimeScanner(currentScanner);
-      clearLiveRows();
+      persistScanner(mergeScanner(currentScanner, incoming));
       return sendJson(res, { ok: true, scanner: currentScanner });
     } catch (e) {
       return sendJson(res, { ok: false, error: e.message }, 400);
@@ -238,10 +656,7 @@ const webServer = http.createServer(async (req, res) => {
   if (req.method === "POST" && parsed.pathname === "/api/scanner/save") {
     try {
       const incoming = JSON.parse((await collectRequestBody(req)) || "{}");
-      currentScanner = mergeScanner(currentScanner, incoming);
-      saveJsonFile(SCANNER_FILE, currentScanner);
-      writeRuntimeScanner(currentScanner);
-      clearLiveRows();
+      persistScanner(mergeScanner(currentScanner, incoming));
       return sendJson(res, { ok: true, scanner: currentScanner });
     } catch (e) {
       return sendJson(res, { ok: false, error: e.message }, 400);
@@ -249,32 +664,34 @@ const webServer = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && parsed.pathname === "/api/scanner/survey") {
-    currentScanner = normalizeScanner({
+    persistScanner({
       ...currentScanner,
       mode: "survey",
-      lastActiveMode: "survey"
+      lastActiveMode: "survey",
+      listen: {
+        ...currentScanner.listen,
+        enabled: false
+      }
     });
-    saveJsonFile(SCANNER_FILE, currentScanner);
-    writeRuntimeScanner(currentScanner);
-    clearLiveRows();
     return sendJson(res, { ok: true, scanner: currentScanner });
   }
 
   if (req.method === "POST" && parsed.pathname === "/api/scanner/track") {
     try {
       const incoming = JSON.parse((await collectRequestBody(req)) || "{}");
-      currentScanner = normalizeScanner({
+      persistScanner({
         ...currentScanner,
         mode: "track",
         lastActiveMode: "track",
+        listen: {
+          ...currentScanner.listen,
+          enabled: false
+        },
         track: {
           ...currentScanner.track,
           ...incoming
         }
       });
-      saveJsonFile(SCANNER_FILE, currentScanner);
-      writeRuntimeScanner(currentScanner);
-      clearLiveRows();
       return sendJson(res, { ok: true, scanner: currentScanner });
     } catch (e) {
       return sendJson(res, { ok: false, error: e.message }, 400);
@@ -282,26 +699,162 @@ const webServer = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && parsed.pathname === "/api/scanner/pause") {
-    currentScanner = normalizeScanner({
+    persistScanner({
       ...currentScanner,
       mode: "paused"
     });
-    saveJsonFile(SCANNER_FILE, currentScanner);
-    writeRuntimeScanner(currentScanner);
-    clearLiveRows();
     return sendJson(res, { ok: true, scanner: currentScanner });
   }
 
   if (req.method === "POST" && parsed.pathname === "/api/scanner/resume") {
     const resumeMode = currentScanner.lastActiveMode === "track" ? "track" : "survey";
-    currentScanner = normalizeScanner({
+    persistScanner({
       ...currentScanner,
-      mode: resumeMode
+      mode: resumeMode,
+      listen: {
+        ...currentScanner.listen,
+        enabled: false
+      }
     });
-    saveJsonFile(SCANNER_FILE, currentScanner);
-    writeRuntimeScanner(currentScanner);
-    clearLiveRows();
     return sendJson(res, { ok: true, scanner: currentScanner });
+  }
+
+  if (req.method === "GET" && parsed.pathname === "/api/listen") {
+    return sendJson(res, {
+      ok: true,
+      mode: currentScanner.mode,
+      lastActiveMode: currentScanner.lastActiveMode,
+      listen: currentScanner.listen
+    });
+  }
+
+  if (req.method === "GET" && parsed.pathname === "/api/listen/status") {
+    return sendJson(res, {
+      ok: true,
+      scannerMode: currentScanner.mode,
+      status: {
+        ...listenStatus,
+        clients: listenAudioClients.size
+      }
+    });
+  }
+
+  if (req.method === "GET" && parsed.pathname === "/api/listen/log") {
+    return sendJson(res, {
+      ok: true,
+      lines: listenLog.slice(-100)
+    });
+  }
+
+  if (req.method === "GET" && parsed.pathname === "/api/listen/audio") {
+    if (currentScanner.mode !== "listen" || !currentScanner.listen?.enabled) {
+      res.writeHead(409, { "Content-Type": "text/plain; charset=utf-8" });
+      return res.end("Listen mode is not active");
+    }
+
+    const started = startListenAudioPipeline(currentScanner);
+    if (!started) {
+      res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+      return res.end("Listen pipeline failed to start");
+    }
+
+    res.writeHead(200, {
+      "Content-Type": "audio/mpeg",
+      "Cache-Control": "no-cache, no-store, must-revalidate",
+      "Pragma": "no-cache",
+      "Expires": "0",
+      "Connection": "keep-alive",
+      "Transfer-Encoding": "chunked"
+    });
+
+    listenAudioClients.add(res);
+    setListenStatus({});
+
+    req.on("close", () => {
+      listenAudioClients.delete(res);
+      try {
+        if (!res.writableEnded) res.end();
+      } catch (_) {}
+      setListenStatus({});
+    });
+
+    return;
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/listen/start") {
+    try {
+      const incoming = JSON.parse((await collectRequestBody(req)) || "{}");
+
+      const frequency = normalizeFrequencyInput(
+        incoming.frequency ?? incoming.freq ?? currentScanner.listen?.frequency
+      );
+      const modulation = String(
+        incoming.modulation ?? currentScanner.listen?.modulation ?? "fm"
+      ).toLowerCase();
+      const gain = Number(incoming.gain ?? currentScanner.listen?.gain ?? 30);
+      const squelch = Number(incoming.squelch ?? currentScanner.listen?.squelch ?? 0);
+
+      if (!frequency) {
+        return sendJson(res, {
+          ok: false,
+          error: "A valid frequency is required, for example 162.55M or 99.5M"
+        }, 400);
+      }
+
+      if (!["fm", "wbfm", "am"].includes(modulation)) {
+        return sendJson(res, {
+          ok: false,
+          error: "Unsupported modulation. Use fm, wbfm, or am."
+        }, 400);
+      }
+
+      const previousMode =
+        currentScanner.mode === "track" || currentScanner.mode === "survey"
+          ? currentScanner.mode
+          : currentScanner.lastActiveMode === "track"
+            ? "track"
+            : "survey";
+
+      persistScanner({
+        ...currentScanner,
+        mode: "listen",
+        lastActiveMode: previousMode,
+        targetFrequency: frequency,
+        listen: {
+          ...currentScanner.listen,
+          enabled: true,
+          frequency,
+          modulation,
+          gain,
+          squelch
+        }
+      });
+
+      return sendJson(res, {
+        ok: true,
+        scanner: currentScanner
+      });
+    } catch (e) {
+      return sendJson(res, { ok: false, error: e.message }, 400);
+    }
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/listen/stop") {
+    const resumeMode = currentScanner.lastActiveMode === "track" ? "track" : "survey";
+
+    persistScanner({
+      ...currentScanner,
+      mode: resumeMode,
+      listen: {
+        ...currentScanner.listen,
+        enabled: false
+      }
+    });
+
+    return sendJson(res, {
+      ok: true,
+      scanner: currentScanner
+    });
   }
 
   if (req.method === "GET" && parsed.pathname === "/api/live") {

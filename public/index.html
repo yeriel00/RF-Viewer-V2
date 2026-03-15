@@ -255,6 +255,11 @@
       box-shadow: 0 0 0 1px rgba(255, 210, 127, 0.12) inset;
     }
 
+    .mode-listen {
+      border-color: #3a5f7a !important;
+      box-shadow: 0 0 0 1px rgba(127, 178, 255, 0.14) inset;
+    }
+
     .status-good { color: #7fe08a; }
     .status-warn { color: #ffd27f; }
     .status-bad { color: #ff8a8a; }
@@ -275,6 +280,62 @@
       background: #33281a;
       border-color: #6f5630;
       color: #ffd27f;
+    }
+
+    #modeBadge.listen {
+      background: #1c2d3a;
+      border-color: #3f6a8a;
+      color: #9fcbff;
+    }
+
+    #listenStatus,
+    #listenPipelineStatus {
+      min-height: 1.2em;
+    }
+
+    .listen-panel {
+      display: grid;
+      gap: 14px;
+    }
+
+    .listen-subcard {
+      background: #151515;
+      border: 1px solid #2d2d2d;
+      border-radius: 10px;
+      padding: 12px;
+    }
+
+    .listen-subcard h4 {
+      margin: 0 0 10px 0;
+      font-size: 14px;
+    }
+
+    .listen-meta {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    audio {
+      width: 100%;
+      max-width: 720px;
+      display: block;
+    }
+
+    .log-box {
+      background: #0e0e0e;
+      border: 1px solid #2d2d2d;
+      border-radius: 8px;
+      padding: 10px;
+      min-height: 100px;
+      max-height: 220px;
+      overflow: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      line-height: 1.45;
+      color: #d7d7d7;
     }
 
     @keyframes spin {
@@ -426,6 +487,86 @@
         <div class="field">
           <label>&nbsp;</label>
           <button id="saveScannerBtn">Save scanner config</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mode-survey" data-card>
+    <div class="card-header" data-collapse-toggle>
+      <h3>Listen</h3>
+      <div class="card-header-right">
+        <span class="muted">Lock to one frequency and stream audio to the browser</span>
+        <button class="collapse-btn" type="button" aria-label="Toggle section">−</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="listen-panel">
+        <div class="listen-subcard">
+          <h4>Tuning</h4>
+          <div class="settings-grid">
+            <div class="field">
+              <label for="listenFrequency">Frequency</label>
+              <input id="listenFrequency" type="text" placeholder="162.55M or 99.5M" />
+            </div>
+
+            <div class="field">
+              <label for="listenModulation">Modulation</label>
+              <select id="listenModulation">
+                <option value="fm">NFM</option>
+                <option value="wbfm">WBFM</option>
+                <option value="am">AM</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="listenGain">Gain</label>
+              <input id="listenGain" type="number" step="1" min="0" max="60" value="30" />
+            </div>
+
+            <div class="field">
+              <label for="listenSquelch">Squelch</label>
+              <input id="listenSquelch" type="number" step="1" min="0" max="100" value="0" />
+            </div>
+
+            <div class="field">
+              <label>&nbsp;</label>
+              <button id="listenStartBtn">Listen</button>
+            </div>
+
+            <div class="field">
+              <label>&nbsp;</label>
+              <button id="listenStopBtn">Back to scan</button>
+            </div>
+          </div>
+
+          <div class="row" style="margin-top: 12px;">
+            <span class="pill" id="listenSourceBadge">Shared browser stream</span>
+            <span class="muted" id="listenStatus">Not listening</span>
+          </div>
+        </div>
+
+        <div class="listen-subcard">
+          <h4>Browser Audio</h4>
+          <audio id="listenBrowserAudio" controls preload="none"></audio>
+
+          <div class="row" style="margin-top: 12px;">
+            <button id="playBrowserAudioBtn">Play in browser</button>
+            <button id="stopBrowserAudioBtn">Stop browser audio</button>
+            <span class="muted" id="listenPipelineStatus">Pipeline idle</span>
+          </div>
+
+          <div class="listen-meta">
+            <span class="pill" id="listenPipelineStateBadge">State: idle</span>
+            <span class="pill" id="listenClientCountBadge">Clients: 0</span>
+            <span class="pill" id="listenAudioMetaBadge">Audio: --</span>
+          </div>
+        </div>
+
+        <div class="listen-subcard">
+          <h4>Pipeline Log</h4>
+          <div class="muted" id="listenPipelineMeta" style="margin-bottom: 10px;">No pipeline info yet</div>
+          <div id="listenLog" class="log-box">No log entries yet.</div>
         </div>
       </div>
     </div>

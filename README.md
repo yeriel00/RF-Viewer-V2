@@ -1,11 +1,14 @@
 # RF Viewer V2
 
-Pi-based RF survey and tracking viewer with:
+Pi-based RF survey, tracking, and listen viewer with:
 
 - live `rtl_power` ingestion
 - Node web UI
 - survey mode
 - track mode
+- listen mode
+- browser audio streaming during listen mode
+- optional local Pi audio output during standalone tests
 - pause/resume scanner control
 - proximity mode with audio cues
 - optional Alfa hotspot access for field use
@@ -19,6 +22,8 @@ This README assumes you are starting from a cloned repo.
 - Browser-based spectrum viewer
 - Live peak/event table
 - Survey and track scanner modes
+- Listen mode for locking to a single frequency
+- Browser audio stream for clients connected to the viewer
 - Pause/resume scanner from the UI
 - Proximity mode with hot/cold feedback
 - Record controls
@@ -42,7 +47,8 @@ rf-viewer-v2/
 │   └── js/
 │       └── app.js
 ├── scanner/
-│   └── rf-viewer-stream.sh
+│   ├── rf-viewer-stream.sh
+│   └── rf-listen.sh
 └── scripts/
     └── start-alfa-hotspot.sh
 ```
@@ -55,16 +61,19 @@ Install the required packages on the Raspberry Pi:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y nodejs npm jq netcat-openbsd network-manager
+sudo apt-get install -y nodejs npm jq netcat-openbsd network-manager ffmpeg alsa-utils
 
 node -v
 npm -v
+ffmpeg -version
+aplay --version
 ```
 
 You will also need:
 
 - an RTL-SDR device
 - `rtl_power` available on the system
+- `rtl_fm` available on the system
 - an optional Alfa USB Wi-Fi dongle if using hotspot mode
 
 ---
@@ -86,15 +95,11 @@ cd ~/Desktop/rf-viewer-v2
 git pull
 ```
 
-Make sure the scanner script is executable:
+Make the scripts executable:
 
 ```bash
 chmod +x scanner/rf-viewer-stream.sh
-```
-
-Make sure the hotspot helper script in the repo is executable too:
-
-```bash
+chmod +x scanner/rf-listen.sh
 chmod +x scripts/start-alfa-hotspot.sh
 ```
 
@@ -102,7 +107,7 @@ chmod +x scripts/start-alfa-hotspot.sh
 
 ## Included Hotspot Script
 
-The repo now includes the hotspot startup script here:
+The repo includes the hotspot startup script here:
 
 ```text
 scripts/start-alfa-hotspot.sh
@@ -214,6 +219,10 @@ Wide scanning across a configured frequency range.
 
 Narrow scanning around a selected frequency.
 
+### Listen Mode
+
+Locks onto one selected frequency and exposes a shared browser audio stream at the viewer. The scanner sweep is paused while listen mode is active.
+
 ### Paused Mode
 
 Stops active scan execution while keeping the UI available.
@@ -221,6 +230,62 @@ Stops active scan execution while keeping the UI available.
 ### Proximity Mode
 
 Track-mode helper that gives hot/cold style strength feedback and optional audio alerts.
+
+---
+
+## Browser Audio in Listen Mode
+
+When listen mode is active:
+
+- the SDR is locked to one frequency
+- the Node server spawns the audio pipeline
+- the frontend can play the shared stream through the browser
+- multiple hotspot clients can listen to the same tuned frequency
+
+The browser audio stream is served from:
+
+```text
+/api/listen/audio
+```
+
+Listen pipeline status and log endpoints:
+
+```text
+/api/listen/status
+/api/listen/log
+```
+
+> Browser playback normally requires a user click on the page before audio can start.
+
+---
+
+## Standalone Local Listen Test
+
+The included `scanner/rf-listen.sh` script is still useful for local Pi audio testing.
+
+Example for FM broadcast:
+
+```bash
+./scanner/rf-listen.sh 93.3M wbfm 35 0
+```
+
+Example for narrow FM:
+
+```bash
+./scanner/rf-listen.sh 162.55M fm 35 0
+```
+
+If you want to force a specific ALSA device:
+
+```bash
+APLAY_DEVICE=hw:0,0 ./scanner/rf-listen.sh 93.3M wbfm 35 0
+```
+
+If you want raw audio on stdout for piping into another tool:
+
+```bash
+OUTPUT_MODE=stdout ./scanner/rf-listen.sh 93.3M wbfm 35 0
+```
 
 ---
 
@@ -250,6 +315,29 @@ Scanner state:
 curl -s http://127.0.0.1:3000/api/scanner | jq
 ```
 
+Listen state:
+
+```bash
+curl -s http://127.0.0.1:3000/api/listen | jq
+curl -s http://127.0.0.1:3000/api/listen/status | jq
+curl -s http://127.0.0.1:3000/api/listen/log | jq
+```
+
+Start listen mode from terminal:
+
+```bash
+curl -s -X POST http://127.0.0.1:3000/api/listen/start \
+  -H 'Content-Type: application/json' \
+  -d '{"frequency":"93.3M","modulation":"wbfm","gain":35,"squelch":0}' | jq
+```
+
+Stop listen mode:
+
+```bash
+curl -s -X POST http://127.0.0.1:3000/api/listen/stop \
+  -H 'Content-Type: application/json' | jq
+```
+
 Ports listening:
 
 ```bash
@@ -263,7 +351,7 @@ ss -ltnp | grep 9001
 
 ### `rf-viewer.service`
 
-Runs the Node web app on port `3000`.
+Runs the Node web app and listen audio pipeline on port `3000`.
 
 Create:
 
@@ -286,10 +374,13 @@ WorkingDirectory=/home/user/Desktop/rf-viewer-v2
 ExecStart=/usr/bin/node /home/user/Desktop/rf-viewer-v2/server.js
 Restart=always
 RestartSec=3
+Environment=APLAY_DEVICE=default
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+> If your Pi needs a specific ALSA device, replace `default` with something like `hw:0,0`.
 
 Enable and start:
 
@@ -479,7 +570,7 @@ Saved scanner configuration.
 
 ### `scanner.runtime.json`
 
-Live scanner runtime state used by the scanner script.
+Live scanner runtime state used by the scanner script and the web server.
 
 ---
 
@@ -494,6 +585,7 @@ Project files:
 ~/Desktop/rf-viewer-v2/public/index.html
 ~/Desktop/rf-viewer-v2/public/js/app.js
 ~/Desktop/rf-viewer-v2/scanner/rf-viewer-stream.sh
+~/Desktop/rf-viewer-v2/scanner/rf-listen.sh
 ~/Desktop/rf-viewer-v2/scripts/start-alfa-hotspot.sh
 ~/Desktop/rf-viewer-v2/settings.json
 ~/Desktop/rf-viewer-v2/scanner.json
@@ -507,6 +599,13 @@ Installed system files:
 /etc/systemd/system/alfa-hotspot.service
 /etc/systemd/system/rf-viewer.service
 /etc/systemd/system/rf-viewer-scanner.service
+```
+
+Runtime audio diagnostics:
+
+```text
+/tmp/rf-listen-status.json
+/tmp/rf-listen.log
 ```
 
 ---
@@ -551,6 +650,52 @@ Then inspect the scanner logs:
 ```bash
 journalctl -u rf-viewer-scanner.service -n 50 --no-pager
 ```
+
+### Listen mode works on the Pi but not in the browser
+
+Check listen diagnostics:
+
+```bash
+curl -s http://127.0.0.1:3000/api/listen/status | jq
+curl -s http://127.0.0.1:3000/api/listen/log | jq
+```
+
+Confirm `ffmpeg` exists:
+
+```bash
+which ffmpeg
+ffmpeg -version
+```
+
+If missing, install it:
+
+```bash
+sudo apt-get install -y ffmpeg
+```
+
+Then restart the web service:
+
+```bash
+sudo systemctl restart rf-viewer.service
+```
+
+### Pi can tune but you hear no local audio during standalone tests
+
+Check ALSA devices:
+
+```bash
+aplay -l
+aplay -L
+speaker-test -D default -t sine -f 1000 -c 1
+```
+
+If needed, force a device:
+
+```bash
+APLAY_DEVICE=hw:0,0 ./scanner/rf-listen.sh 93.3M wbfm 35 0
+```
+
+If that works, set `Environment=APLAY_DEVICE=hw:0,0` in `rf-viewer.service`.
 
 ### Scanner is paused and not resuming
 
@@ -631,6 +776,8 @@ After reboot, verify:
 - another device can join the hotspot
 - the web UI opens
 - `/api/live` returns data
+- listen mode starts
+- browser audio plays
 - pause/resume still works
 
 ---
@@ -644,6 +791,9 @@ After reboot, verify:
 - the viewer runs on the Pi, so client devices only need the URL
 - the scanner feeds the Node app locally through port `9001`
 - the hotspot helper script lives in the repo under `scripts/` and gets copied into `/usr/local/bin/` for `systemd`
+- listen mode uses the same SDR, so scanning and listening do not happen at the same time
+- browser audio depends on `ffmpeg`
+- browser playback usually requires a user click
 
 ---
 
@@ -657,6 +807,9 @@ If everything is working, this should all be true:
 - `http://<hotspot-ip>:3000` loads the viewer
 - `/api/live` shows rows
 - `/api/scanner` shows the correct mode
+- listen mode starts from the UI
+- `Play in browser` works for connected clients
 - `rf-viewer.service` is active
 - `rf-viewer-scanner.service` is active
 - `alfa-hotspot.service` is active
+```
