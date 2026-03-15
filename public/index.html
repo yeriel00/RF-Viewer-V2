@@ -71,6 +71,11 @@
       cursor: pointer;
     }
 
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
     input[type="checkbox"] {
       transform: translateY(1px);
     }
@@ -95,6 +100,7 @@
       padding: 8px;
       border-bottom: 1px solid #2a2a2a;
       text-align: left;
+      vertical-align: top;
     }
 
     .muted { color: #aaa; }
@@ -131,6 +137,7 @@
       background: #181818;
       font-size: 12px;
       color: #bbb;
+      white-space: nowrap;
     }
 
     .overlay {
@@ -256,8 +263,8 @@
     }
 
     .mode-listen {
-      border-color: #3a5f7a !important;
-      box-shadow: 0 0 0 1px rgba(127, 178, 255, 0.14) inset;
+      border-color: #4c3f75 !important;
+      box-shadow: 0 0 0 1px rgba(181, 160, 255, 0.12) inset;
     }
 
     .status-good { color: #7fe08a; }
@@ -283,59 +290,194 @@
     }
 
     #modeBadge.listen {
-      background: #1c2d3a;
-      border-color: #3f6a8a;
-      color: #9fcbff;
+      background: #261f39;
+      border-color: #6d5a9b;
+      color: #d6c4ff;
     }
 
-    #listenStatus,
-    #listenPipelineStatus {
-      min-height: 1.2em;
-    }
-
-    .listen-panel {
+    .listen-grid {
       display: grid;
-      gap: 14px;
-    }
-
-    .listen-subcard {
-      background: #151515;
-      border: 1px solid #2d2d2d;
-      border-radius: 10px;
-      padding: 12px;
-    }
-
-    .listen-subcard h4 {
-      margin: 0 0 10px 0;
-      font-size: 14px;
-    }
-
-    .listen-meta {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      margin-top: 10px;
-    }
-
-    audio {
-      width: 100%;
-      max-width: 720px;
-      display: block;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      align-items: end;
     }
 
     .log-box {
-      background: #0e0e0e;
-      border: 1px solid #2d2d2d;
-      border-radius: 8px;
-      padding: 10px;
-      min-height: 100px;
+      margin-top: 12px;
+      padding: 12px;
+      background: #101010;
+      border: 1px solid #2f2f2f;
+      border-radius: 10px;
       max-height: 220px;
       overflow: auto;
+      white-space: pre-wrap;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 12px;
-      white-space: pre-wrap;
-      line-height: 1.45;
-      color: #d7d7d7;
+      line-height: 1.35;
+      color: #ccc;
+    }
+
+    .ble-metrics,
+    .wifi-metrics {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+
+    .ble-table-wrap,
+    .wifi-table-wrap {
+      margin-top: 14px;
+      max-height: 380px;
+      overflow: auto;
+      border: 1px solid #2d2d2d;
+      border-radius: 10px;
+    }
+
+    .ble-table-wrap table,
+    .wifi-table-wrap table {
+      margin-top: 0;
+    }
+
+    .ble-name,
+    .wifi-name {
+      font-weight: 600;
+    }
+
+    .ble-sub,
+    .wifi-sub {
+      display: block;
+      color: #9a9a9a;
+      font-size: 12px;
+      margin-top: 3px;
+      word-break: break-all;
+    }
+
+    .ble-match-pill,
+    .wifi-match-pill {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid #444;
+      background: #1a1a1a;
+      color: #ddd;
+      white-space: nowrap;
+    }
+
+    .ble-match-high,
+    .wifi-match-high {
+      background: #33201f;
+      border-color: #8f4b45;
+      color: #ffb4ab;
+    }
+
+    .ble-match-medium,
+    .wifi-match-medium {
+      background: #332d1a;
+      border-color: #8a6a2f;
+      color: #ffd27f;
+    }
+
+    .ble-match-low,
+    .wifi-match-low {
+      background: #1f2433;
+      border-color: #4d628f;
+      color: #a8c4ff;
+    }
+
+    .ble-distance-pill,
+    .wifi-distance-pill {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      border: 1px solid #444;
+      background: #171717;
+      color: #ddd;
+      white-space: nowrap;
+    }
+
+    .ble-distance-very_close,
+    .wifi-distance-very_close {
+      background: #3a1f1f;
+      border-color: #8e4a4a;
+      color: #ffb3b3;
+    }
+
+    .ble-distance-close,
+    .wifi-distance-close {
+      background: #332a1b;
+      border-color: #8d6a34;
+      color: #ffd58c;
+    }
+
+    .ble-distance-medium,
+    .wifi-distance-medium {
+      background: #1d2530;
+      border-color: #4d658d;
+      color: #afc7ff;
+    }
+
+    .ble-distance-far,
+    .wifi-distance-far {
+      background: #1a1a1a;
+      border-color: #444;
+      color: #bbb;
+    }
+
+    .ble-row-high td {
+      background: rgba(143, 75, 69, 0.10);
+    }
+
+    .ble-row-medium td {
+      background: rgba(138, 106, 47, 0.08);
+    }
+
+    .ble-row-low td {
+      background: rgba(77, 98, 143, 0.08);
+    }
+
+    .ble-why,
+    .wifi-why,
+    .ble-related,
+    .wifi-related {
+      font-size: 12px;
+      color: #a8a8a8;
+      max-width: 280px;
+      line-height: 1.35;
+    }
+
+    .memory-row-stale td {
+      opacity: 0.62;
+    }
+
+    .memory-row-very-stale td {
+      opacity: 0.38;
+    }
+
+    .memory-row-locked td {
+      box-shadow: inset 0 1px 0 rgba(255, 210, 127, 0.18), inset 0 -1px 0 rgba(255, 210, 127, 0.18);
+    }
+
+    .tiny-btn {
+      padding: 5px 8px;
+      min-width: 58px;
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    .tiny-btn.locked {
+      border-color: #8d6a34;
+      color: #ffd58c;
+      background: #332a1b;
+    }
+
+    .memory-note {
+      margin-top: 10px;
+      font-size: 12px;
+      color: #9a9a9a;
     }
 
     @keyframes spin {
@@ -496,78 +638,176 @@
     <div class="card-header" data-collapse-toggle>
       <h3>Listen</h3>
       <div class="card-header-right">
-        <span class="muted">Lock to one frequency and stream audio to the browser</span>
+        <span class="muted">Tune one frequency and stream audio</span>
         <button class="collapse-btn" type="button" aria-label="Toggle section">−</button>
       </div>
     </div>
     <div class="card-body">
-      <div class="listen-panel">
-        <div class="listen-subcard">
-          <h4>Tuning</h4>
-          <div class="settings-grid">
-            <div class="field">
-              <label for="listenFrequency">Frequency</label>
-              <input id="listenFrequency" type="text" placeholder="162.55M or 99.5M" />
-            </div>
-
-            <div class="field">
-              <label for="listenModulation">Modulation</label>
-              <select id="listenModulation">
-                <option value="fm">NFM</option>
-                <option value="wbfm">WBFM</option>
-                <option value="am">AM</option>
-              </select>
-            </div>
-
-            <div class="field">
-              <label for="listenGain">Gain</label>
-              <input id="listenGain" type="number" step="1" min="0" max="60" value="30" />
-            </div>
-
-            <div class="field">
-              <label for="listenSquelch">Squelch</label>
-              <input id="listenSquelch" type="number" step="1" min="0" max="100" value="0" />
-            </div>
-
-            <div class="field">
-              <label>&nbsp;</label>
-              <button id="listenStartBtn">Listen</button>
-            </div>
-
-            <div class="field">
-              <label>&nbsp;</label>
-              <button id="listenStopBtn">Back to scan</button>
-            </div>
-          </div>
-
-          <div class="row" style="margin-top: 12px;">
-            <span class="pill" id="listenSourceBadge">Shared browser stream</span>
-            <span class="muted" id="listenStatus">Not listening</span>
-          </div>
+      <div class="listen-grid">
+        <div class="field">
+          <label for="listenFrequency">Frequency</label>
+          <input id="listenFrequency" type="text" placeholder="99.5M or 162.55M" />
         </div>
 
-        <div class="listen-subcard">
-          <h4>Browser Audio</h4>
-          <audio id="listenBrowserAudio" controls preload="none"></audio>
-
-          <div class="row" style="margin-top: 12px;">
-            <button id="playBrowserAudioBtn">Play in browser</button>
-            <button id="stopBrowserAudioBtn">Stop browser audio</button>
-            <span class="muted" id="listenPipelineStatus">Pipeline idle</span>
-          </div>
-
-          <div class="listen-meta">
-            <span class="pill" id="listenPipelineStateBadge">State: idle</span>
-            <span class="pill" id="listenClientCountBadge">Clients: 0</span>
-            <span class="pill" id="listenAudioMetaBadge">Audio: --</span>
-          </div>
+        <div class="field">
+          <label for="listenModulation">Modulation</label>
+          <select id="listenModulation">
+            <option value="fm">FM</option>
+            <option value="wbfm">WBFM</option>
+            <option value="am">AM</option>
+          </select>
         </div>
 
-        <div class="listen-subcard">
-          <h4>Pipeline Log</h4>
-          <div class="muted" id="listenPipelineMeta" style="margin-bottom: 10px;">No pipeline info yet</div>
-          <div id="listenLog" class="log-box">No log entries yet.</div>
+        <div class="field">
+          <label for="listenGain">Gain</label>
+          <input id="listenGain" type="number" step="1" min="0" max="60" />
         </div>
+
+        <div class="field">
+          <label for="listenSquelch">Squelch</label>
+          <input id="listenSquelch" type="number" step="1" min="0" max="100" />
+        </div>
+
+        <div class="field">
+          <label>&nbsp;</label>
+          <button id="listenStartBtn">Start listen</button>
+        </div>
+
+        <div class="field">
+          <label>&nbsp;</label>
+          <button id="listenStopBtn">Stop listen</button>
+        </div>
+
+        <div class="field">
+          <label>&nbsp;</label>
+          <button id="playBrowserAudioBtn">Play in browser</button>
+        </div>
+
+        <div class="field">
+          <label>&nbsp;</label>
+          <button id="stopBrowserAudioBtn">Stop browser audio</button>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top: 12px;">
+        <span class="pill" id="listenPipelineStateBadge">State: --</span>
+        <span class="pill" id="listenClientCountBadge">Clients: --</span>
+        <span class="pill" id="listenAudioMetaBadge">Audio: --</span>
+        <span class="muted" id="listenStatus">Not listening</span>
+      </div>
+
+      <div class="row" style="margin-top: 10px;">
+        <span class="muted" id="listenPipelineStatus">Pipeline idle</span>
+      </div>
+
+      <div class="row" style="margin-top: 10px;">
+        <span class="muted" id="listenPipelineMeta">No pipeline info yet</span>
+      </div>
+
+      <audio id="listenBrowserAudio" controls style="width: 100%; margin-top: 14px;"></audio>
+
+      <div class="log-box" id="listenLog">No log entries yet.</div>
+    </div>
+  </div>
+
+  <div class="card mode-survey" data-card>
+    <div class="card-header" data-collapse-toggle>
+      <h3>BLE</h3>
+      <div class="card-header-right">
+        <span class="muted">Nearby BLE advertisers and recent signatures</span>
+        <button class="collapse-btn" type="button" aria-label="Toggle section">−</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="row">
+        <button id="bleStartBtn">Start BLE</button>
+        <button id="bleStopBtn">Stop BLE</button>
+        <button id="bleClearMemoryBtn">Clear BLE Memory</button>
+        <span class="muted" id="bleStatusText">Loading BLE status...</span>
+      </div>
+
+      <div class="ble-metrics">
+        <span class="pill" id="bleStateBadge">BLE: --</span>
+        <span class="pill" id="bleUniqueBadge">Unique: --</span>
+        <span class="pill" id="bleActiveBadge">Active: --</span>
+        <span class="pill" id="bleEventsBadge">Events: --</span>
+        <span class="pill" id="bleMatchBadge">Matches: --</span>
+        <span class="pill" id="bleMatchBreakdownBadge">H/M/L/B/P/R: --</span>
+        <span class="pill" id="bleStrongestBadge">Strongest: --</span>
+        <span class="pill" id="bleRememberedBadge">Remembered: --</span>
+      </div>
+
+      <div class="memory-note">
+        <span id="bleMemoryInfo">BLE memory is stored locally in this browser. Stale rows stay visible and dim over time.</span>
+      </div>
+
+      <div class="ble-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Device</th>
+              <th>Match</th>
+              <th>RSSI</th>
+              <th>Distance</th>
+              <th>Seen</th>
+              <th>Related</th>
+              <th>Why</th>
+              <th>Lock</th>
+            </tr>
+          </thead>
+          <tbody id="bleDevicesBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mode-survey" data-card>
+    <div class="card-header" data-collapse-toggle>
+      <h3>Wi-Fi</h3>
+      <div class="card-header-right">
+        <span class="muted">Nearby APs and Flock-style SSID matches</span>
+        <button class="collapse-btn" type="button" aria-label="Toggle section">−</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="row">
+        <button id="wifiStartBtn">Start Wi-Fi</button>
+        <button id="wifiStopBtn">Stop Wi-Fi</button>
+        <button id="wifiClearMemoryBtn">Clear Wi-Fi Memory</button>
+        <span class="muted" id="wifiStatusText">Loading Wi-Fi status...</span>
+      </div>
+
+      <div class="wifi-metrics">
+        <span class="pill" id="wifiStateBadge">Wi-Fi: --</span>
+        <span class="pill" id="wifiUniqueBadge">Unique: --</span>
+        <span class="pill" id="wifiActiveBadge">Active: --</span>
+        <span class="pill" id="wifiEventsBadge">Events: --</span>
+        <span class="pill" id="wifiMatchBadge">Matches: --</span>
+        <span class="pill" id="wifiMatchBreakdownBadge">H/M/L: --</span>
+        <span class="pill" id="wifiStrongestBadge">Strongest: --</span>
+        <span class="pill" id="wifiRememberedBadge">Remembered: --</span>
+      </div>
+
+      <div class="memory-note">
+        <span id="wifiMemoryInfo">Wi-Fi memory is stored locally in this browser. Hidden or stale networks stay visible until cleared.</span>
+      </div>
+
+      <div class="wifi-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Network</th>
+              <th>Match</th>
+              <th>Signal</th>
+              <th>Distance</th>
+              <th>Seen</th>
+              <th>Related</th>
+              <th>Why</th>
+              <th>Lock</th>
+            </tr>
+          </thead>
+          <tbody id="wifiNetworksBody"></tbody>
+        </table>
       </div>
     </div>
   </div>

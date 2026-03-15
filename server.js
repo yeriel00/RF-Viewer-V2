@@ -6,14 +6,27 @@ const url = require("url");
 const { spawn } = require("child_process");
 const { PassThrough } = require("stream");
 const { listFiles, parseFile, parseLine, buildDataset } = require("./parser");
+const { enrichWifiSummary } = require("./wifi-matcher");
+const { enrichBleSummary } = require("./ble-matcher");
 
 const PORT = 3000;
 const TCP_PORT = 9001;
 const HOST = "0.0.0.0";
+
 const PUBLIC_DIR = path.join(__dirname, "public");
+const DATA_DIR = path.join(__dirname, "data");
+
 const SETTINGS_FILE = path.join(__dirname, "settings.json");
 const SCANNER_FILE = path.join(__dirname, "scanner.json");
 const SCANNER_RUNTIME_FILE = path.join(__dirname, "scanner.runtime.json");
+
+const BLE_STATUS_FILE = path.join(DATA_DIR, "ble-status.json");
+const BLE_SUMMARY_FILE = path.join(DATA_DIR, "ble-summary.json");
+const BLE_CONTROL_FILE = path.join(DATA_DIR, "ble-control.json");
+
+const WIFI_STATUS_FILE = path.join(DATA_DIR, "wifi-status.json");
+const WIFI_SUMMARY_FILE = path.join(DATA_DIR, "wifi-summary.json");
+const WIFI_CONTROL_FILE = path.join(DATA_DIR, "wifi-control.json");
 
 const liveRows = [];
 const MAX_LIVE_ROWS = 100;
@@ -55,6 +68,112 @@ const DEFAULT_SCANNER = {
     squelch: 0
   }
 };
+
+function loadJsonFile(file, fallback) {
+  try {
+    if (fs.existsSync(file)) {
+      return { ...fallback, ...JSON.parse(fs.readFileSync(file, "utf8")) };
+    }
+  } catch (err) {
+    console.error(`Failed to load ${file}:`, err.message);
+  }
+  return { ...fallback };
+}
+
+function loadJsonDiskFile(file, fallback = {}) {
+  try {
+    if (fs.existsSync(file)) {
+      return JSON.parse(fs.readFileSync(file, "utf8"));
+    }
+  } catch (err) {
+    console.error(`Failed to load ${file}:`, err.message);
+  }
+  return fallback;
+}
+
+function saveJsonFile(file, data) {
+  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+}
+
+function ensureDataDir() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+  } catch (err) {
+    console.error("Failed to ensure data dir:", err.message);
+  }
+}
+
+function ensureBleControlFile() {
+  try {
+    ensureDataDir();
+    if (!fs.existsSync(BLE_CONTROL_FILE)) {
+      saveJsonFile(BLE_CONTROL_FILE, {
+        enabled: true,
+        updated_at: new Date().toISOString()
+      });
+    }
+  } catch (err) {
+    console.error("Failed to ensure BLE control file:", err.message);
+  }
+}
+
+function readBleControl() {
+  ensureBleControlFile();
+  return loadJsonDiskFile(BLE_CONTROL_FILE, {
+    enabled: true,
+    updated_at: new Date().toISOString()
+  });
+}
+
+function writeBleControl(enabled) {
+  ensureBleControlFile();
+  const next = {
+    enabled: !!enabled,
+    updated_at: new Date().toISOString()
+  };
+  saveJsonFile(BLE_CONTROL_FILE, next);
+  return next;
+}
+
+function ensureWifiControlFile() {
+  try {
+    ensureDataDir();
+    if (!fs.existsSync(WIFI_CONTROL_FILE)) {
+      saveJsonFile(WIFI_CONTROL_FILE, {
+        enabled: true,
+        interface: "wlan0",
+        interval_seconds: 7,
+        updated_at: new Date().toISOString()
+      });
+    }
+  } catch (err) {
+    console.error("Failed to ensure Wi-Fi control file:", err.message);
+  }
+}
+
+function readWifiControl() {
+  ensureWifiControlFile();
+  return loadJsonDiskFile(WIFI_CONTROL_FILE, {
+    enabled: true,
+    interface: "wlan0",
+    interval_seconds: 7,
+    updated_at: new Date().toISOString()
+  });
+}
+
+function writeWifiControl(enabled) {
+  ensureWifiControlFile();
+  const current = readWifiControl();
+  const next = {
+    ...current,
+    enabled: !!enabled,
+    updated_at: new Date().toISOString()
+  };
+  saveJsonFile(WIFI_CONTROL_FILE, next);
+  return next;
+}
 
 let currentSettings = loadJsonFile(SETTINGS_FILE, DEFAULT_SETTINGS);
 let currentScanner = loadJsonFile(SCANNER_FILE, DEFAULT_SCANNER);
@@ -131,6 +250,7 @@ function endListenAudioClients() {
 
 function killChild(child, name) {
   if (!child) return;
+
   try {
     child.kill("SIGTERM");
   } catch (_) {}
@@ -230,6 +350,7 @@ function startListenAudioPipeline(scanner) {
 
   const sampleRate = getListenSampleRate(modulation);
   const aplayDevice = process.env.APLAY_DEVICE || "default";
+  const ffmpegPath = fs.existsSync("/usr/bin/ffmpeg") ? "/usr/bin/ffmpeg" : "ffmpeg";
 
   const rtlArgs = [
     "-f", frequency,
@@ -279,7 +400,7 @@ function startListenAudioPipeline(scanner) {
     stdio: ["pipe", "ignore", "pipe"]
   });
 
-  listenFfmpegProc = spawn("ffmpeg", ffmpegArgs, {
+  listenFfmpegProc = spawn(ffmpegPath, ffmpegArgs, {
     stdio: ["pipe", "pipe", "pipe"]
   });
 
@@ -339,6 +460,7 @@ function startListenAudioPipeline(scanner) {
           } catch (_) {}
         }
       }
+
       setListenStatus({});
     });
   }
@@ -371,29 +493,29 @@ function startListenAudioPipeline(scanner) {
   });
 
   listenRtlProc.on("error", err => {
-    appendListenLog(`rtl_fm spawn error: ${err.message}`);
+    appendListenLog(`rtl_fm spawn error: ${err.code || ""} ${err.message}`);
     setListenStatus({
       active: false,
       state: "error",
-      message: `rtl_fm spawn error: ${err.message}`
+      message: `rtl_fm spawn error: ${err.code || ""} ${err.message}`.trim()
     });
   });
 
   listenAplayProc.on("error", err => {
-    appendListenLog(`aplay spawn error: ${err.message}`);
+    appendListenLog(`aplay spawn error: ${err.code || ""} ${err.message}`);
     setListenStatus({
       active: false,
       state: "error",
-      message: `aplay spawn error: ${err.message}`
+      message: `aplay spawn error: ${err.code || ""} ${err.message}`.trim()
     });
   });
 
   listenFfmpegProc.on("error", err => {
-    appendListenLog(`ffmpeg spawn error: ${err.message}`);
+    appendListenLog(`ffmpeg spawn error: ${err.code || ""} ${err.message}`);
     setListenStatus({
       active: false,
       state: "error",
-      message: `ffmpeg spawn error: ${err.message}`
+      message: `ffmpeg spawn error: ${err.code || ""} ${err.message}`.trim()
     });
   });
 
@@ -424,21 +546,6 @@ function syncListenPipeline() {
 /* -----------------------------
    Core helpers
 ----------------------------- */
-
-function loadJsonFile(file, fallback) {
-  try {
-    if (fs.existsSync(file)) {
-      return { ...fallback, ...JSON.parse(fs.readFileSync(file, "utf8")) };
-    }
-  } catch (err) {
-    console.error(`Failed to load ${file}:`, err.message);
-  }
-  return { ...fallback };
-}
-
-function saveJsonFile(file, data) {
-  fs.writeFileSync(file, JSON.stringify(data, null, 2));
-}
 
 function hzToM(hz) {
   return `${(hz / 1e6).toFixed(6)}M`;
@@ -541,6 +648,8 @@ function clearRecordedRows() {
 currentScanner = normalizeScanner(currentScanner);
 saveJsonFile(SCANNER_FILE, currentScanner);
 saveJsonFile(SCANNER_RUNTIME_FILE, currentScanner);
+ensureBleControlFile();
+ensureWifiControlFile();
 syncListenPipeline();
 
 function addLiveLine(line) {
@@ -857,6 +966,121 @@ const webServer = http.createServer(async (req, res) => {
     });
   }
 
+  if (req.method === "GET" && parsed.pathname === "/api/ble/status") {
+    const control = readBleControl();
+    const status = loadJsonDiskFile(BLE_STATUS_FILE, {
+      status: "unknown",
+      enabled: control.enabled,
+      total_unique_seen: 0,
+      active_unique_seen: 0,
+      total_events: 0
+    });
+
+    return sendJson(res, {
+      ok: true,
+      control,
+      status: {
+        ...status,
+        enabled: control.enabled
+      }
+    });
+  }
+
+  if (req.method === "GET" && parsed.pathname === "/api/ble/summary") {
+    const control = readBleControl();
+    const summary = loadJsonDiskFile(BLE_SUMMARY_FILE, {
+      status: control.enabled ? "running" : "paused",
+      enabled: control.enabled,
+      total_unique_seen: 0,
+      active_unique_seen: 0,
+      total_events: 0,
+      strongest_active: null,
+      devices: []
+    });
+
+    const enriched = enrichBleSummary({
+      ...summary,
+      enabled: control.enabled
+    });
+
+    return sendJson(res, {
+      ok: true,
+      control,
+      summary: enriched
+    });
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/ble/start") {
+    const control = writeBleControl(true);
+    return sendJson(res, {
+      ok: true,
+      control
+    });
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/ble/stop") {
+    const control = writeBleControl(false);
+    return sendJson(res, {
+      ok: true,
+      control
+    });
+  }
+
+  if (req.method === "GET" && parsed.pathname === "/api/wifi/status") {
+    const control = readWifiControl();
+    const status = loadJsonDiskFile(WIFI_STATUS_FILE, {
+      status: "unknown",
+      enabled: control.enabled,
+      interface: control.interface,
+      total_unique_seen: 0,
+      active_unique_seen: 0,
+      total_events: 0
+    });
+
+    return sendJson(res, {
+      ok: true,
+      control,
+      status: {
+        ...status,
+        enabled: control.enabled
+      }
+    });
+  }
+
+  if (req.method === "GET" && parsed.pathname === "/api/wifi/summary") {
+    const control = readWifiControl();
+    const summary = loadJsonDiskFile(WIFI_SUMMARY_FILE, {
+      status: control.enabled ? "running" : "paused",
+      enabled: control.enabled,
+      total_unique_seen: 0,
+      active_unique_seen: 0,
+      total_events: 0,
+      strongest_active: null,
+      networks: []
+    });
+
+    const enriched = enrichWifiSummary({
+      ...summary,
+      enabled: control.enabled
+    });
+
+    return sendJson(res, {
+      ok: true,
+      control,
+      summary: enriched
+    });
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/wifi/start") {
+    const control = writeWifiControl(true);
+    return sendJson(res, { ok: true, control });
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/wifi/stop") {
+    const control = writeWifiControl(false);
+    return sendJson(res, { ok: true, control });
+  }
+
   if (req.method === "GET" && parsed.pathname === "/api/live") {
     return sendJson(res, buildDataset("live", liveRows, currentSettings));
   }
@@ -864,9 +1088,11 @@ const webServer = http.createServer(async (req, res) => {
   if (req.method === "GET" && parsed.pathname === "/api/data") {
     const file = parsed.query.file;
     if (!file) return sendJson(res, { error: "Missing file" }, 400);
+
     if (file === "live") {
       return sendJson(res, buildDataset("live", liveRows, currentSettings));
     }
+
     try {
       return sendJson(res, parseFile(file, currentSettings));
     } catch (e) {
@@ -917,6 +1143,7 @@ const tcpServer = net.createServer((socket) => {
   socket.on("data", chunk => {
     buffer += chunk.toString();
     let idx;
+
     while ((idx = buffer.indexOf("\n")) >= 0) {
       const line = buffer.slice(0, idx).trim();
       buffer = buffer.slice(idx + 1);

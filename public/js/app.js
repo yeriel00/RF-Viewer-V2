@@ -12,7 +12,7 @@ const statusEl = document.getElementById("status");
 const clickedFreq = document.getElementById("clickedFreq");
 const scannerStatus = document.getElementById("scannerStatus");
 const canvas = document.getElementById("chart");
-const ctx = canvas.getContext("2d");
+const ctx = canvas ? canvas.getContext("2d") : null;
 
 const relativeSquelch = document.getElementById("relativeSquelch");
 const absoluteFloor = document.getElementById("absoluteFloor");
@@ -54,6 +54,36 @@ const listenAudioMetaBadge = document.getElementById("listenAudioMetaBadge");
 const listenPipelineMeta = document.getElementById("listenPipelineMeta");
 const listenLog = document.getElementById("listenLog");
 
+const bleStartBtn = document.getElementById("bleStartBtn");
+const bleStopBtn = document.getElementById("bleStopBtn");
+const bleClearMemoryBtn = document.getElementById("bleClearMemoryBtn");
+const bleStatusText = document.getElementById("bleStatusText");
+const bleStateBadge = document.getElementById("bleStateBadge");
+const bleUniqueBadge = document.getElementById("bleUniqueBadge");
+const bleActiveBadge = document.getElementById("bleActiveBadge");
+const bleEventsBadge = document.getElementById("bleEventsBadge");
+const bleMatchBadge = document.getElementById("bleMatchBadge");
+const bleMatchBreakdownBadge = document.getElementById("bleMatchBreakdownBadge");
+const bleStrongestBadge = document.getElementById("bleStrongestBadge");
+const bleRememberedBadge = document.getElementById("bleRememberedBadge");
+const bleMemoryInfo = document.getElementById("bleMemoryInfo");
+const bleDevicesBody = document.getElementById("bleDevicesBody");
+
+const wifiStartBtn = document.getElementById("wifiStartBtn");
+const wifiStopBtn = document.getElementById("wifiStopBtn");
+const wifiClearMemoryBtn = document.getElementById("wifiClearMemoryBtn");
+const wifiStatusText = document.getElementById("wifiStatusText");
+const wifiStateBadge = document.getElementById("wifiStateBadge");
+const wifiUniqueBadge = document.getElementById("wifiUniqueBadge");
+const wifiActiveBadge = document.getElementById("wifiActiveBadge");
+const wifiEventsBadge = document.getElementById("wifiEventsBadge");
+const wifiMatchBadge = document.getElementById("wifiMatchBadge");
+const wifiMatchBreakdownBadge = document.getElementById("wifiMatchBreakdownBadge");
+const wifiStrongestBadge = document.getElementById("wifiStrongestBadge");
+const wifiRememberedBadge = document.getElementById("wifiRememberedBadge");
+const wifiMemoryInfo = document.getElementById("wifiMemoryInfo");
+const wifiNetworksBody = document.getElementById("wifiNetworksBody");
+
 const proximityEnabled = document.getElementById("proximityEnabled");
 const audioEnabled = document.getElementById("audioEnabled");
 const smoothingCount = document.getElementById("smoothingCount");
@@ -74,8 +104,18 @@ const busyOverlay = document.getElementById("busyOverlay");
 const busyTitle = document.getElementById("busyTitle");
 const busySubtitle = document.getElementById("busySubtitle");
 
+const BLE_MEMORY_KEY = "rfv2_ble_memory_v1";
+const WIFI_MEMORY_KEY = "rfv2_wifi_memory_v1";
+const MEMORY_LIMIT = 200;
+const ACTIVE_AGE_MS = 15000;
+const STALE_AGE_MS = 60000;
+const VERY_STALE_AGE_MS = 5 * 60 * 1000;
+
 let refreshTimer = null;
 let diagnosticsTimer = null;
+let bleTimer = null;
+let wifiTimer = null;
+
 let currentTrace = [];
 let currentSettings = null;
 let currentScanner = null;
@@ -96,6 +136,14 @@ let lastAlertPeakDb = null;
 let lastLockTargetHz = null;
 let lastHitTimestampMs = 0;
 
+let lastBleStatus = null;
+let lastBleSummary = null;
+let lastWifiStatus = null;
+let lastWifiSummary = null;
+
+let bleMemory = loadMemoryStore(BLE_MEMORY_KEY);
+let wifiMemory = loadMemoryStore(WIFI_MEMORY_KEY);
+
 function fmtHz(hz) {
   return (hz / 1e6).toFixed(3) + " MHz";
 }
@@ -114,7 +162,45 @@ function summaryItem(label, value) {
   return `<div><div class="muted">${label}</div><div>${value}</div></div>`;
 }
 
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => {
+    const map = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      "\"": "&quot;",
+      "'": "&#39;"
+    };
+    return map[char] || char;
+  });
+}
+
+function fmtShortTime(ts) {
+  if (!ts) return "--";
+  try {
+    return new Date(ts).toLocaleTimeString();
+  } catch {
+    return ts;
+  }
+}
+
+function shortJoin(list, max = 2) {
+  if (!Array.isArray(list) || !list.length) return "--";
+  return list.slice(0, max).join(", ");
+}
+
+function isoNow() {
+  return new Date().toISOString();
+}
+
+function parseTimeMs(value) {
+  if (!value) return 0;
+  const n = new Date(value).getTime();
+  return Number.isFinite(n) ? n : 0;
+}
+
 function showBusy(title, subtitle = "Applying changes") {
+  if (!busyOverlay || !busyTitle || !busySubtitle) return;
   busyTitle.textContent = title;
   busySubtitle.textContent = subtitle;
   busyOverlay.classList.add("active");
@@ -122,11 +208,13 @@ function showBusy(title, subtitle = "Applying changes") {
 }
 
 function hideBusy() {
+  if (!busyOverlay) return;
   busyOverlay.classList.remove("active");
   busyOverlay.setAttribute("aria-hidden", "true");
 }
 
 function setUiMessage(message, level = "good") {
+  if (!uiMessage) return;
   uiMessage.textContent = message;
   uiMessage.className = "";
   if (level === "good") uiMessage.classList.add("status-good");
@@ -135,6 +223,7 @@ function setUiMessage(message, level = "good") {
 }
 
 function setListenStatus(message, level = "good") {
+  if (!listenStatus) return;
   listenStatus.textContent = message;
   listenStatus.className = "muted";
   if (level === "good") listenStatus.classList.add("status-good");
@@ -143,6 +232,7 @@ function setListenStatus(message, level = "good") {
 }
 
 function setListenPipelineStatus(message, level = "good") {
+  if (!listenPipelineStatus) return;
   listenPipelineStatus.textContent = message;
   listenPipelineStatus.className = "muted";
   if (level === "good") listenPipelineStatus.classList.add("status-good");
@@ -150,7 +240,26 @@ function setListenPipelineStatus(message, level = "good") {
   if (level === "bad") listenPipelineStatus.classList.add("status-bad");
 }
 
+function setBleStatus(message, level = "good") {
+  if (!bleStatusText) return;
+  bleStatusText.textContent = message;
+  bleStatusText.className = "muted";
+  if (level === "good") bleStatusText.classList.add("status-good");
+  if (level === "warn") bleStatusText.classList.add("status-warn");
+  if (level === "bad") bleStatusText.classList.add("status-bad");
+}
+
+function setWifiStatus(message, level = "good") {
+  if (!wifiStatusText) return;
+  wifiStatusText.textContent = message;
+  wifiStatusText.className = "muted";
+  if (level === "good") wifiStatusText.classList.add("status-good");
+  if (level === "warn") wifiStatusText.classList.add("status-warn");
+  if (level === "bad") wifiStatusText.classList.add("status-bad");
+}
+
 function updatePauseButton() {
+  if (!pauseBtn) return;
   if (currentScanner && currentScanner.mode === "paused") {
     pauseBtn.textContent = "Resume scanner";
   } else {
@@ -162,28 +271,36 @@ function updateModeUi() {
   const cards = document.querySelectorAll("[data-card]");
 
   if (currentScanner && currentScanner.mode === "track") {
-    modeBadge.textContent = "TRACK MODE ACTIVE";
-    modeBadge.classList.remove("survey", "paused", "listen");
-    modeBadge.classList.add("track");
+    if (modeBadge) {
+      modeBadge.textContent = "TRACK MODE ACTIVE";
+      modeBadge.classList.remove("survey", "paused", "listen");
+      modeBadge.classList.add("track");
+    }
 
     const centerHz = Number(currentScanner.track?.centerHz);
-    lockedFreqBadge.textContent = Number.isFinite(centerHz)
-      ? `Locked: ${fmtHz(centerHz)}`
-      : "Locked: unknown";
+    if (lockedFreqBadge) {
+      lockedFreqBadge.textContent = Number.isFinite(centerHz)
+        ? `Locked: ${fmtHz(centerHz)}`
+        : "Locked: unknown";
+    }
 
     cards.forEach(card => {
       card.classList.remove("mode-survey", "mode-paused", "mode-listen");
       card.classList.add("mode-track");
     });
   } else if (currentScanner && currentScanner.mode === "paused") {
-    modeBadge.textContent = "SCANNER PAUSED";
-    modeBadge.classList.remove("survey", "track", "listen");
-    modeBadge.classList.add("paused");
+    if (modeBadge) {
+      modeBadge.textContent = "SCANNER PAUSED";
+      modeBadge.classList.remove("survey", "track", "listen");
+      modeBadge.classList.add("paused");
+    }
 
-    if (currentScanner.lastActiveMode === "track" && currentScanner.track?.centerHz) {
-      lockedFreqBadge.textContent = `Last lock: ${fmtHz(Number(currentScanner.track.centerHz))}`;
-    } else {
-      lockedFreqBadge.textContent = "Paused";
+    if (lockedFreqBadge) {
+      if (currentScanner.lastActiveMode === "track" && currentScanner.track?.centerHz) {
+        lockedFreqBadge.textContent = `Last lock: ${fmtHz(Number(currentScanner.track.centerHz))}`;
+      } else {
+        lockedFreqBadge.textContent = "Paused";
+      }
     }
 
     cards.forEach(card => {
@@ -191,23 +308,31 @@ function updateModeUi() {
       card.classList.add("mode-paused");
     });
   } else if (currentScanner && currentScanner.mode === "listen") {
-    modeBadge.textContent = "LISTEN MODE";
-    modeBadge.classList.remove("survey", "track", "paused");
-    modeBadge.classList.add("listen");
+    if (modeBadge) {
+      modeBadge.textContent = "LISTEN MODE";
+      modeBadge.classList.remove("survey", "track", "paused");
+      modeBadge.classList.add("listen");
+    }
 
     const freq = currentScanner.listen?.frequency || currentScanner.targetFrequency;
-    lockedFreqBadge.textContent = freq ? `Listening: ${freq}` : "Listening";
+    if (lockedFreqBadge) {
+      lockedFreqBadge.textContent = freq ? `Listening: ${freq}` : "Listening";
+    }
 
     cards.forEach(card => {
       card.classList.remove("mode-survey", "mode-track", "mode-paused");
       card.classList.add("mode-listen");
     });
   } else {
-    modeBadge.textContent = "SURVEY MODE";
-    modeBadge.classList.remove("track", "paused", "listen");
-    modeBadge.classList.add("survey");
+    if (modeBadge) {
+      modeBadge.textContent = "SURVEY MODE";
+      modeBadge.classList.remove("track", "paused", "listen");
+      modeBadge.classList.add("survey");
+    }
 
-    lockedFreqBadge.textContent = "No lock";
+    if (lockedFreqBadge) {
+      lockedFreqBadge.textContent = "No lock";
+    }
 
     cards.forEach(card => {
       card.classList.remove("mode-track", "mode-paused", "mode-listen");
@@ -277,7 +402,7 @@ function parseSurveyRangeString(range) {
   return {
     startMHz: startMHz != null ? startMHz.toFixed(3) : "",
     stopMHz: stopMHz != null ? stopMHz.toFixed(3) : "",
-    binKhz: binKhz
+    binKhz
   };
 }
 
@@ -288,6 +413,445 @@ function mean(values) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function proximityRank(bucket) {
+  switch (bucket) {
+    case "very_close": return 4;
+    case "close": return 3;
+    case "medium": return 2;
+    case "far": return 1;
+    default: return 0;
+  }
+}
+
+function confidenceRank(confidence) {
+  switch (confidence) {
+    case "high": return 3;
+    case "medium": return 2;
+    case "low": return 1;
+    default: return 0;
+  }
+}
+
+function isMeaningfulBleName(name, address) {
+  const raw = String(name || "").trim();
+  if (!raw) return false;
+
+  const lower = raw.toLowerCase();
+  const addr = String(address || "").trim().toLowerCase();
+  const addrDashed = addr.replace(/:/g, "-");
+
+  if (lower === addr || lower === addrDashed) return false;
+  if (/^[0-9a-f]{2}([-:][0-9a-f]{2}){5}$/i.test(raw)) return false;
+  return true;
+}
+
+function isHiddenWifiSsid(ssid) {
+  const value = String(ssid || "").trim();
+  return !value || value === "(hidden)";
+}
+
+function getBleDisplayLabel(entry) {
+  return isMeaningfulBleName(entry.name, entry.address)
+    ? entry.name
+    : (entry.address || "Unknown BLE");
+}
+
+function getWifiDisplayLabel(entry) {
+  return isHiddenWifiSsid(entry.ssid)
+    ? (entry.bssid || "(hidden)")
+    : entry.ssid;
+}
+
+function loadMemoryStore(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveMemoryStore(key, store) {
+  try {
+    localStorage.setItem(key, JSON.stringify(store));
+  } catch (_) {}
+}
+
+function saveAllMemory() {
+  saveMemoryStore(BLE_MEMORY_KEY, bleMemory);
+  saveMemoryStore(WIFI_MEMORY_KEY, wifiMemory);
+}
+
+function getBleMemoryKey(device) {
+  return String(device.address || "").trim().toUpperCase();
+}
+
+function getWifiMemoryKey(network) {
+  const bssid = String(network.bssid || "").trim().toUpperCase();
+  if (bssid) return `BSSID:${bssid}`;
+  const ssid = String(network.ssid || "").trim();
+  if (ssid) return `SSID:${ssid}`;
+  return "";
+}
+
+function getBleSignal(entry) {
+  if (typeof entry.last_rssi === "number") return entry.last_rssi;
+  if (typeof entry.max_rssi === "number") return entry.max_rssi;
+  if (typeof entry.min_rssi === "number") return entry.min_rssi;
+  return -9999;
+}
+
+function getWifiSignal(entry) {
+  if (typeof entry.last_signal === "number") return entry.last_signal;
+  if (typeof entry.max_signal === "number") return entry.max_signal;
+  if (typeof entry.min_signal === "number") return entry.min_signal;
+  return -9999;
+}
+
+function getEntryAgeMs(entry) {
+  return Math.max(0, Date.now() - parseTimeMs(entry.last_seen));
+}
+
+function getStaleClass(entry) {
+  const age = getEntryAgeMs(entry);
+  if (entry.activeNow && age <= ACTIVE_AGE_MS) return "";
+  if (age <= STALE_AGE_MS) return "";
+  if (age <= VERY_STALE_AGE_MS) return "memory-row-stale";
+  return "memory-row-very-stale";
+}
+
+function getSeenLabel(entry) {
+  const state = entry.activeNow && getEntryAgeMs(entry) <= ACTIVE_AGE_MS ? "Live now" : "Seen";
+  return `${state} • ${fmtShortTime(entry.last_seen)}`;
+}
+
+function trimMemoryStore(store, type) {
+  const entries = Object.values(store);
+  if (entries.length <= MEMORY_LIMIT) return store;
+
+  entries.sort((a, b) => {
+    const aLocked = a.locked ? 1 : 0;
+    const bLocked = b.locked ? 1 : 0;
+    if (bLocked !== aLocked) return bLocked - aLocked;
+
+    const aActive = a.activeNow ? 1 : 0;
+    const bActive = b.activeNow ? 1 : 0;
+    if (bActive !== aActive) return bActive - aActive;
+
+    const aConf = confidenceRank(a.match?.confidence);
+    const bConf = confidenceRank(b.match?.confidence);
+    if (bConf !== aConf) return bConf - aConf;
+
+    const aSignal = type === "ble" ? getBleSignal(a) : getWifiSignal(a);
+    const bSignal = type === "ble" ? getBleSignal(b) : getWifiSignal(b);
+    if (bSignal !== aSignal) return bSignal - aSignal;
+
+    return parseTimeMs(b.last_seen) - parseTimeMs(a.last_seen);
+  });
+
+  const trimmed = {};
+  entries.slice(0, MEMORY_LIMIT).forEach(entry => {
+    trimmed[entry.key] = entry;
+  });
+  return trimmed;
+}
+
+function mergeBleMemory(summaryData) {
+  const devices = Array.isArray(summaryData?.devices) ? summaryData.devices : [];
+  const now = isoNow();
+
+  Object.values(bleMemory).forEach(entry => {
+    entry.activeNow = false;
+  });
+
+  devices.forEach(device => {
+    const key = getBleMemoryKey(device);
+    if (!key) return;
+
+    const existing = bleMemory[key] || {};
+    const maxRssi = [existing.max_rssi, device.max_rssi, device.last_rssi]
+      .filter(v => typeof v === "number")
+      .reduce((acc, v) => Math.max(acc, v), -Infinity);
+
+    const minRssi = [existing.min_rssi, device.min_rssi, device.last_rssi]
+      .filter(v => typeof v === "number")
+      .reduce((acc, v) => Math.min(acc, v), Infinity);
+
+    bleMemory[key] = {
+      ...existing,
+      key,
+      type: "ble",
+      address: device.address || existing.address || "",
+      name: device.name || existing.name || "",
+      first_seen: existing.first_seen || device.first_seen || device.last_seen || now,
+      last_seen: device.last_seen || now,
+      seen_count: Number(existing.seen_count || 0) + 1,
+      last_rssi: typeof device.last_rssi === "number" ? device.last_rssi : existing.last_rssi,
+      max_rssi: Number.isFinite(maxRssi) ? maxRssi : existing.max_rssi,
+      min_rssi: Number.isFinite(minRssi) ? minRssi : existing.min_rssi,
+      tx_power: device.tx_power ?? existing.tx_power ?? null,
+      manufacturer_ids: Array.isArray(device.manufacturer_ids) ? device.manufacturer_ids : (existing.manufacturer_ids || []),
+      manufacturer_data: device.manufacturer_data || existing.manufacturer_data || {},
+      service_uuids: Array.isArray(device.service_uuids) ? device.service_uuids : (existing.service_uuids || []),
+      service_data: device.service_data || existing.service_data || {},
+      match: device.match || existing.match || {},
+      activeNow: true,
+      locked: !!existing.locked,
+      related: existing.related || null
+    };
+  });
+
+  bleMemory = trimMemoryStore(bleMemory, "ble");
+}
+
+function mergeWifiMemory(summaryData) {
+  const networks = Array.isArray(summaryData?.networks) ? summaryData.networks : [];
+  const now = isoNow();
+
+  Object.values(wifiMemory).forEach(entry => {
+    entry.activeNow = false;
+  });
+
+  networks.forEach(network => {
+    const key = getWifiMemoryKey(network);
+    if (!key) return;
+
+    const existing = wifiMemory[key] || {};
+    const maxSignal = [existing.max_signal, network.max_signal, network.last_signal]
+      .filter(v => typeof v === "number")
+      .reduce((acc, v) => Math.max(acc, v), -Infinity);
+
+    const minSignal = [existing.min_signal, network.min_signal, network.last_signal]
+      .filter(v => typeof v === "number")
+      .reduce((acc, v) => Math.min(acc, v), Infinity);
+
+    wifiMemory[key] = {
+      ...existing,
+      key,
+      type: "wifi",
+      ssid: network.ssid || existing.ssid || "",
+      bssid: network.bssid || existing.bssid || "",
+      channel: network.channel || existing.channel || "",
+      security: network.security || existing.security || "",
+      first_seen: existing.first_seen || network.first_seen || network.last_seen || now,
+      last_seen: network.last_seen || now,
+      seen_count: Number(existing.seen_count || 0) + 1,
+      last_signal: typeof network.last_signal === "number" ? network.last_signal : existing.last_signal,
+      max_signal: Number.isFinite(maxSignal) ? maxSignal : existing.max_signal,
+      min_signal: Number.isFinite(minSignal) ? minSignal : existing.min_signal,
+      match: network.match || existing.match || {},
+      activeNow: true,
+      locked: !!existing.locked,
+      related: existing.related || null
+    };
+  });
+
+  wifiMemory = trimMemoryStore(wifiMemory, "wifi");
+}
+
+function buildBleWifiLink(bleEntry, wifiEntry) {
+  let score = 0;
+  const reasons = [];
+
+  const bleMatch = bleEntry.match || {};
+  const wifiMatch = wifiEntry.match || {};
+
+  if (bleMatch.matched && wifiMatch.matched) {
+    score += 28;
+    reasons.push("both matched");
+  }
+
+  if (wifiMatch.family === "flock_wifi") {
+    score += 18;
+    reasons.push("wifi flock pattern");
+  }
+
+  if (["fs_battery", "penguin", "raven", "flock_like", "soundthinking"].includes(bleMatch.family)) {
+    score += 18;
+    reasons.push(`ble ${bleMatch.family}`);
+  }
+
+  if (bleEntry.activeNow && wifiEntry.activeNow) {
+    score += 22;
+    reasons.push("co-seen live");
+  }
+
+  const ageDiffMs = Math.abs(parseTimeMs(bleEntry.last_seen) - parseTimeMs(wifiEntry.last_seen));
+  if (ageDiffMs <= 15_000) {
+    score += 20;
+    reasons.push("same time window");
+  } else if (ageDiffMs <= 60_000) {
+    score += 12;
+    reasons.push("close time window");
+  } else if (ageDiffMs <= 5 * 60_000) {
+    score += 5;
+    reasons.push("recently co-seen");
+  }
+
+  const bleProx = bleMatch.proximity || "unknown";
+  const wifiProx = wifiMatch.proximity || "unknown";
+  const proxDiff = Math.abs(proximityRank(bleProx) - proximityRank(wifiProx));
+
+  if (proxDiff === 0 && proximityRank(bleProx) >= 2) {
+    score += 12;
+    reasons.push("similar distance");
+  } else if (proxDiff === 1) {
+    score += 6;
+    reasons.push("nearby distance class");
+  }
+
+  const bleNameHelpful = isMeaningfulBleName(bleEntry.name, bleEntry.address);
+  const wifiNameHelpful = !isHiddenWifiSsid(wifiEntry.ssid);
+
+  if (bleNameHelpful && !wifiNameHelpful) {
+    score += 5;
+    reasons.push("ble label helps");
+  }
+
+  if (!bleNameHelpful && wifiNameHelpful) {
+    score += 5;
+    reasons.push("wifi label helps");
+  }
+
+  let confidence = "none";
+  if (score >= 70) confidence = "high";
+  else if (score >= 45) confidence = "medium";
+  else if (score >= 30) confidence = "low";
+
+  return {
+    score,
+    confidence,
+    reasons
+  };
+}
+
+function recomputeRelatedLinks() {
+  const bleEntries = Object.values(bleMemory);
+  const wifiEntries = Object.values(wifiMemory);
+
+  bleEntries.forEach(entry => { entry.related = null; });
+  wifiEntries.forEach(entry => { entry.related = null; });
+
+  bleEntries.forEach(bleEntry => {
+    let best = null;
+
+    wifiEntries.forEach(wifiEntry => {
+      const link = buildBleWifiLink(bleEntry, wifiEntry);
+      if (link.confidence === "none") return;
+
+      if (!best || link.score > best.score) {
+        best = {
+          score: link.score,
+          confidence: link.confidence,
+          reasons: link.reasons,
+          wifiKey: wifiEntry.key,
+          label: getWifiDisplayLabel(wifiEntry),
+          bssid: wifiEntry.bssid || "",
+          hidden: isHiddenWifiSsid(wifiEntry.ssid)
+        };
+      }
+    });
+
+    if (best) {
+      bleEntry.related = {
+        type: "wifi",
+        key: best.wifiKey,
+        confidence: best.confidence,
+        label: best.label,
+        sublabel: best.hidden ? (best.bssid || "Hidden SSID") : (best.bssid || ""),
+        reason: best.reasons[0] || "related candidate"
+      };
+    }
+  });
+
+  wifiEntries.forEach(wifiEntry => {
+    let best = null;
+
+    bleEntries.forEach(bleEntry => {
+      const link = buildBleWifiLink(bleEntry, wifiEntry);
+      if (link.confidence === "none") return;
+
+      if (!best || link.score > best.score) {
+        best = {
+          score: link.score,
+          confidence: link.confidence,
+          reasons: link.reasons,
+          bleKey: bleEntry.key,
+          label: getBleDisplayLabel(bleEntry),
+          address: bleEntry.address || ""
+        };
+      }
+    });
+
+    if (best) {
+      wifiEntry.related = {
+        type: "ble",
+        key: best.bleKey,
+        confidence: best.confidence,
+        label: best.label,
+        sublabel: best.address,
+        reason: best.reasons[0] || "related candidate"
+      };
+    }
+  });
+
+  saveAllMemory();
+}
+
+function getBleMemoryEntriesSorted() {
+  const entries = Object.values(bleMemory);
+
+  entries.sort((a, b) => {
+    const aLocked = a.locked ? 1 : 0;
+    const bLocked = b.locked ? 1 : 0;
+    if (bLocked !== aLocked) return bLocked - aLocked;
+
+    const aActive = a.activeNow ? 1 : 0;
+    const bActive = b.activeNow ? 1 : 0;
+    if (bActive !== aActive) return bActive - aActive;
+
+    const aConf = confidenceRank(a.match?.confidence);
+    const bConf = confidenceRank(b.match?.confidence);
+    if (bConf !== aConf) return bConf - aConf;
+
+    const aSig = getBleSignal(a);
+    const bSig = getBleSignal(b);
+    if (bSig !== aSig) return bSig - aSig;
+
+    return parseTimeMs(b.last_seen) - parseTimeMs(a.last_seen);
+  });
+
+  return entries;
+}
+
+function getWifiMemoryEntriesSorted() {
+  const entries = Object.values(wifiMemory);
+
+  entries.sort((a, b) => {
+    const aLocked = a.locked ? 1 : 0;
+    const bLocked = b.locked ? 1 : 0;
+    if (bLocked !== aLocked) return bLocked - aLocked;
+
+    const aActive = a.activeNow ? 1 : 0;
+    const bActive = b.activeNow ? 1 : 0;
+    if (bActive !== aActive) return bActive - aActive;
+
+    const aConf = confidenceRank(a.match?.confidence);
+    const bConf = confidenceRank(b.match?.confidence);
+    if (bConf !== aConf) return bConf - aConf;
+
+    const aSig = getWifiSignal(a);
+    const bSig = getWifiSignal(b);
+    if (bSig !== aSig) return bSig - aSig;
+
+    return parseTimeMs(b.last_seen) - parseTimeMs(a.last_seen);
+  });
+
+  return entries;
 }
 
 function resetProximitySession() {
@@ -309,10 +873,10 @@ function resetProximitySession() {
 
 function clearRenderedData(message = "Waiting for fresh scan data...") {
   currentTrace = [];
-  summary.innerHTML = `<div>${message}</div>`;
-  eventsBody.innerHTML = "";
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  statusEl.textContent = message;
+  if (summary) summary.innerHTML = `<div>${message}</div>`;
+  if (eventsBody) eventsBody.innerHTML = "";
+  if (ctx && canvas) ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (statusEl) statusEl.textContent = message;
 }
 
 function beginScannerTransition(message = "Waiting for fresh scan data...") {
@@ -333,12 +897,12 @@ function ensureAudioContext() {
 }
 
 function beepOnce(freq = 660, duration = 0.06, gainAmount = 0.03) {
-  const ctx = ensureAudioContext();
-  if (!ctx) return;
+  const ctxLocal = ensureAudioContext();
+  if (!ctxLocal) return;
 
-  const now = ctx.currentTime;
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
+  const now = ctxLocal.currentTime;
+  const osc = ctxLocal.createOscillator();
+  const gain = ctxLocal.createGain();
 
   osc.type = "sine";
   osc.frequency.setValueAtTime(freq, now);
@@ -348,19 +912,19 @@ function beepOnce(freq = 660, duration = 0.06, gainAmount = 0.03) {
   gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
 
   osc.connect(gain);
-  gain.connect(ctx.destination);
+  gain.connect(ctxLocal.destination);
 
   osc.start(now);
   osc.stop(now + duration + 0.02);
 }
 
 function playTone(freq = 660, duration = 0.08, gainAmount = 0.035, whenOffset = 0) {
-  const ctx = ensureAudioContext();
-  if (!ctx) return;
+  const ctxLocal = ensureAudioContext();
+  if (!ctxLocal) return;
 
-  const now = ctx.currentTime + whenOffset;
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
+  const now = ctxLocal.currentTime + whenOffset;
+  const osc = ctxLocal.createOscillator();
+  const gain = ctxLocal.createGain();
 
   osc.type = "sine";
   osc.frequency.setValueAtTime(freq, now);
@@ -370,7 +934,7 @@ function playTone(freq = 660, duration = 0.08, gainAmount = 0.035, whenOffset = 
   gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
 
   osc.connect(gain);
-  gain.connect(ctx.destination);
+  gain.connect(ctxLocal.destination);
 
   osc.start(now);
   osc.stop(now + duration + 0.02);
@@ -424,6 +988,10 @@ function findTrackedEvent(events, scanner) {
 }
 
 function updateProximityUI(state) {
+  if (!proximityTarget || !proximityTrend || !proximityStrength || !proximityMeterFill || !proximityCurrentDb || !proximityPeakDb || !proximityModeState) {
+    return;
+  }
+
   if (!state) {
     proximityTarget.textContent = selectedHz ? fmtHz(selectedHz) : "No target selected";
     proximityTrend.textContent = "STEADY";
@@ -433,7 +1001,7 @@ function updateProximityUI(state) {
     proximityCurrentDb.textContent = "Current: -- dB";
     proximityPeakDb.textContent = "Peak: -- dB";
 
-    if (!proximityEnabled.checked) {
+    if (!proximityEnabled?.checked) {
       proximityModeState.textContent = "Idle";
     } else if (hadTrackedHit && staleCounter >= 3) {
       proximityModeState.textContent = "No valid hit - signal stale";
@@ -481,7 +1049,7 @@ function handleProximity(data) {
     lastLockTargetHz = targetHz;
   }
 
-  if (!proximityEnabled.checked) {
+  if (!proximityEnabled?.checked) {
     updateProximityUI({
       targetHz,
       normalized: 0,
@@ -490,10 +1058,12 @@ function handleProximity(data) {
       trend: "steady",
       modeText: "Track mode active, proximity off"
     });
-    proximityCurrentDb.textContent = "Current: -- dB";
-    proximityPeakDb.textContent = sessionPeakDb == null
-      ? "Peak: -- dB"
-      : `Peak: ${sessionPeakDb.toFixed(2)} dB`;
+    if (proximityCurrentDb) proximityCurrentDb.textContent = "Current: -- dB";
+    if (proximityPeakDb) {
+      proximityPeakDb.textContent = sessionPeakDb == null
+        ? "Peak: -- dB"
+        : `Peak: ${sessionPeakDb.toFixed(2)} dB`;
+    }
     return;
   }
 
@@ -502,20 +1072,22 @@ function handleProximity(data) {
   if (!trackedEvent) {
     staleCounter += 1;
 
-    if (hadTrackedHit && staleCounter === 3 && audioEnabled.checked) {
+    if (hadTrackedHit && staleCounter === 3 && audioEnabled?.checked) {
       alertStaleWarning();
     }
 
     updateProximityUI(null);
-    proximityModeState.textContent = hadTrackedHit
-      ? "No valid hit - signal stale"
-      : "Waiting for valid tracked hit";
+    if (proximityModeState) {
+      proximityModeState.textContent = hadTrackedHit
+        ? "No valid hit - signal stale"
+        : "Waiting for valid tracked hit";
+    }
     return;
   }
 
   const nowMs = Date.now();
-  const smoothingN = Number(smoothingCount.value) || 5;
-  const historyN = Number(historyCount.value) || 20;
+  const smoothingN = Number(smoothingCount?.value) || 5;
+  const historyN = Number(historyCount?.value) || 20;
 
   const wasStale = staleCounter >= 3;
   staleCounter = 0;
@@ -557,7 +1129,7 @@ function handleProximity(data) {
     modeText: "Proximity tracking active"
   });
 
-  if (audioEnabled.checked) {
+  if (audioEnabled?.checked) {
     if (!hadTrackedHit) {
       alertLockAcquired();
     } else if (wasStale) {
@@ -583,6 +1155,7 @@ function handleProximity(data) {
 }
 
 function drawTrace(points) {
+  if (!ctx || !canvas) return;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (!points.length) return;
 
@@ -629,48 +1202,52 @@ function renderData(data) {
   }
 
   const s = data.summary;
-  summary.innerHTML = s ? [
-    summaryItem("Rows", s.rows),
-    summaryItem("Range", `${fmtHz(s.startHz)} → ${fmtHz(s.stopHz)}`),
-    summaryItem("Strongest", `${fmtHz(s.strongestHz)} @ ${s.strongestDb.toFixed(2)} dB`),
-    summaryItem("First Seen", s.firstSeen),
-    summaryItem("Last Seen", s.lastSeen)
-  ].join("") : "<div>No data</div>";
+  if (summary) {
+    summary.innerHTML = s ? [
+      summaryItem("Rows", s.rows),
+      summaryItem("Range", `${fmtHz(s.startHz)} → ${fmtHz(s.stopHz)}`),
+      summaryItem("Strongest", `${fmtHz(s.strongestHz)} @ ${s.strongestDb.toFixed(2)} dB`),
+      summaryItem("First Seen", s.firstSeen),
+      summaryItem("Last Seen", s.lastSeen)
+    ].join("") : "<div>No data</div>";
+  }
 
   currentTrace = data.peakTrace || [];
   drawTrace(currentTrace);
 
-  eventsBody.innerHTML = (data.events || [])
-    .slice()
-    .reverse()
-    .slice(0, 200)
-    .map(e => `
-      <tr>
-        <td>${e.timestamp}</td>
-        <td>${fmtHz(e.peakHz)}</td>
-        <td>${e.peakDb.toFixed(2)}</td>
-        <td>${e.medianDb.toFixed(2)}</td>
-        <td>${fmtHz(e.startHz)} → ${fmtHz(e.stopHz)}</td>
-      </tr>
-    `).join("");
+  if (eventsBody) {
+    eventsBody.innerHTML = (data.events || [])
+      .slice()
+      .reverse()
+      .slice(0, 200)
+      .map(e => `
+        <tr>
+          <td>${e.timestamp}</td>
+          <td>${fmtHz(e.peakHz)}</td>
+          <td>${e.peakDb.toFixed(2)}</td>
+          <td>${e.medianDb.toFixed(2)}</td>
+          <td>${fmtHz(e.startHz)} → ${fmtHz(e.stopHz)}</td>
+        </tr>
+      `).join("");
+  }
 
-  statusEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+  if (statusEl) statusEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
   handleProximity(data);
 }
 
 function settingsPayload() {
   return {
-    relativeSquelchDb: Number(relativeSquelch.value),
-    absoluteFloorDb: Number(absoluteFloor.value),
-    minRepeats: Number(minRepeats.value),
-    clusterWidthHz: Number(clusterWidthHz.value)
+    relativeSquelchDb: Number(relativeSquelch?.value),
+    absoluteFloorDb: Number(absoluteFloor?.value),
+    minRepeats: Number(minRepeats?.value),
+    clusterWidthHz: Number(clusterWidthHz?.value)
   };
 }
 
 function scannerPayload() {
-  const startMHz = parseLooseFrequencyToMHz(surveyStartMHz.value);
-  const stopMHz = parseLooseFrequencyToMHz(surveyStopMHz.value);
-  const binKhz = Number(surveyBinKhz.value);
+  const startMHz = parseLooseFrequencyToMHz(surveyStartMHz?.value);
+  const stopMHz = parseLooseFrequencyToMHz(surveyStopMHz?.value);
+  const binKhz = Number(surveyBinKhz?.value);
 
   if (
     startMHz == null ||
@@ -688,44 +1265,46 @@ function scannerPayload() {
     [fixedStartMHz, fixedStopMHz] = [fixedStopMHz, fixedStartMHz];
   }
 
-  surveyStartMHz.value = fixedStartMHz.toFixed(3);
-  surveyStopMHz.value = fixedStopMHz.toFixed(3);
+  if (surveyStartMHz) surveyStartMHz.value = fixedStartMHz.toFixed(3);
+  if (surveyStopMHz) surveyStopMHz.value = fixedStopMHz.toFixed(3);
 
   return {
     survey: {
       freqRange: formatSurveyRange(fixedStartMHz, fixedStopMHz, binKhz),
-      interval: surveyInterval.value.trim(),
-      window: surveyWindow.value.trim()
+      interval: surveyInterval?.value.trim(),
+      window: surveyWindow?.value.trim()
     },
     track: {
-      spanHz: Number(trackSpanKhz.value) * 1000,
-      binHz: Number(trackBinKhz.value) * 1000,
-      interval: trackInterval.value.trim(),
-      window: trackWindow.value.trim()
+      spanHz: Number(trackSpanKhz?.value) * 1000,
+      binHz: Number(trackBinKhz?.value) * 1000,
+      interval: trackInterval?.value.trim(),
+      window: trackWindow?.value.trim()
     }
   };
 }
 
 function populateSettings(settings) {
   currentSettings = settings;
-  relativeSquelch.value = settings.relativeSquelchDb;
-  absoluteFloor.value = settings.absoluteFloorDb;
-  minRepeats.value = String(settings.minRepeats);
-  clusterWidthHz.value = String(settings.clusterWidthHz);
-  viewerOrigin.textContent = `Viewer: ${window.location.origin}`;
+  if (relativeSquelch) relativeSquelch.value = settings.relativeSquelchDb;
+  if (absoluteFloor) absoluteFloor.value = settings.absoluteFloorDb;
+  if (minRepeats) minRepeats.value = String(settings.minRepeats);
+  if (clusterWidthHz) clusterWidthHz.value = String(settings.clusterWidthHz);
+  if (viewerOrigin) viewerOrigin.textContent = `Viewer: ${window.location.origin}`;
 }
 
 function stopBrowserAudio(resetStatus = true) {
+  if (!listenBrowserAudio) return;
+
   try {
     listenBrowserAudio.pause();
-  } catch (_) {}
+  } catch {}
 
   browserAudioActive = false;
 
   try {
     listenBrowserAudio.removeAttribute("src");
     listenBrowserAudio.load();
-  } catch (_) {}
+  } catch {}
 
   if (resetStatus) {
     setListenPipelineStatus("Browser audio stopped", "good");
@@ -733,6 +1312,8 @@ function stopBrowserAudio(resetStatus = true) {
 }
 
 function ensureBrowserAudioSrc(forceRefresh = false) {
+  if (!listenBrowserAudio) return false;
+
   const shouldHaveStream =
     currentScanner &&
     currentScanner.mode === "listen" &&
@@ -749,6 +1330,8 @@ function ensureBrowserAudioSrc(forceRefresh = false) {
 }
 
 async function playBrowserAudio() {
+  if (!listenBrowserAudio) return;
+
   if (!currentScanner || currentScanner.mode !== "listen") {
     setListenPipelineStatus("Start listen mode first", "warn");
     return;
@@ -767,6 +1350,7 @@ async function playBrowserAudio() {
 }
 
 function renderListenLog(lines) {
+  if (!listenLog) return;
   if (!Array.isArray(lines) || !lines.length) {
     listenLog.textContent = "No log entries yet.";
     return;
@@ -779,28 +1363,27 @@ function renderListenPipeline(status) {
   currentListenPipeline = status || null;
 
   if (!status) {
-    listenPipelineStateBadge.textContent = "State: idle";
-    listenClientCountBadge.textContent = "Clients: 0";
-    listenAudioMetaBadge.textContent = "Audio: --";
-    listenPipelineMeta.textContent = "No pipeline info yet";
+    if (listenPipelineStateBadge) listenPipelineStateBadge.textContent = "State: idle";
+    if (listenClientCountBadge) listenClientCountBadge.textContent = "Clients: 0";
+    if (listenAudioMetaBadge) listenAudioMetaBadge.textContent = "Audio: --";
+    if (listenPipelineMeta) listenPipelineMeta.textContent = "No pipeline info yet";
     setListenPipelineStatus("Pipeline idle", "good");
     return;
   }
 
   const state = status.state || "unknown";
-  const stateLabel = `State: ${state}`;
   const clientCount = Number(status.clients || 0);
   const freq = status.frequency || "--";
   const mod = status.modulation || "--";
   const sampleRate = status.sampleRate ? `${status.sampleRate} Hz` : "--";
   const device = status.audioDevice || "--";
 
-  listenPipelineStateBadge.textContent = stateLabel;
-  listenClientCountBadge.textContent = `Clients: ${clientCount}`;
-  listenAudioMetaBadge.textContent = `Audio: ${mod} / ${sampleRate}`;
-
-  listenPipelineMeta.textContent =
-    `Freq: ${freq} | Device: ${device} | Updated: ${status.updatedAt || "--"}`;
+  if (listenPipelineStateBadge) listenPipelineStateBadge.textContent = `State: ${state}`;
+  if (listenClientCountBadge) listenClientCountBadge.textContent = `Clients: ${clientCount}`;
+  if (listenAudioMetaBadge) listenAudioMetaBadge.textContent = `Audio: ${mod} / ${sampleRate}`;
+  if (listenPipelineMeta) {
+    listenPipelineMeta.textContent = `Freq: ${freq} | Device: ${device} | Updated: ${status.updatedAt || "--"}`;
+  }
 
   if (state === "running") {
     setListenPipelineStatus(status.message || "Pipeline running", "good");
@@ -814,6 +1397,8 @@ function renderListenPipeline(status) {
 }
 
 async function loadListenDiagnostics() {
+  if (!listenPipelineStatus) return;
+
   try {
     const [statusData, logData] = await Promise.all([
       fetchJson("/api/listen/status"),
@@ -823,10 +1408,7 @@ async function loadListenDiagnostics() {
     renderListenPipeline(statusData.status);
     renderListenLog(logData.lines);
 
-    if (
-      (!currentScanner || currentScanner.mode !== "listen") &&
-      browserAudioActive
-    ) {
+    if ((!currentScanner || currentScanner.mode !== "listen") && browserAudioActive) {
       stopBrowserAudio(false);
     }
   } catch (err) {
@@ -834,33 +1416,403 @@ async function loadListenDiagnostics() {
   }
 }
 
+function renderBleData(status, summaryData) {
+  if (!bleStatusText) return;
+
+  lastBleStatus = status || null;
+  lastBleSummary = summaryData || null;
+
+  mergeBleMemory(summaryData);
+  recomputeRelatedLinks();
+
+  const enabled = Boolean(status?.enabled);
+  const state = status?.status || summaryData?.status || (enabled ? "running" : "paused");
+
+  if (bleStateBadge) bleStateBadge.textContent = `BLE: ${String(state).toUpperCase()}`;
+  if (bleUniqueBadge) bleUniqueBadge.textContent = `Unique: ${summaryData?.total_unique_seen ?? 0}`;
+  if (bleActiveBadge) bleActiveBadge.textContent = `Active: ${summaryData?.active_unique_seen ?? 0}`;
+  if (bleEventsBadge) bleEventsBadge.textContent = `Events: ${summaryData?.total_events ?? 0}`;
+
+  const matchSummary = summaryData?.matches || {};
+  if (bleMatchBadge) bleMatchBadge.textContent = `Matches: ${matchSummary.total ?? 0}`;
+  if (bleMatchBreakdownBadge) {
+    bleMatchBreakdownBadge.textContent = `H/M/L/B/P/R: ${matchSummary.high ?? 0}/${matchSummary.medium ?? 0}/${matchSummary.low ?? 0}/${matchSummary.battery ?? 0}/${matchSummary.penguin ?? 0}/${matchSummary.raven ?? 0}`;
+  }
+
+  if (bleStartBtn) bleStartBtn.disabled = enabled;
+  if (bleStopBtn) bleStopBtn.disabled = !enabled;
+
+  const strongest = matchSummary.strongest || summaryData?.strongest_active;
+  if (bleStrongestBadge) {
+    if (strongest && typeof strongest.last_rssi === "number") {
+      const strongestName = strongest.name || strongest.address || "unknown";
+      const matchLabel = strongest.match?.matched ? ` | ${strongest.match.family} ${strongest.match.confidence}` : "";
+      bleStrongestBadge.textContent = `Strongest: ${strongestName} (${strongest.last_rssi} dBm${matchLabel})`;
+    } else {
+      bleStrongestBadge.textContent = "Strongest: --";
+    }
+  }
+
+  const rememberedEntries = getBleMemoryEntriesSorted();
+  const lockedCount = rememberedEntries.filter(entry => entry.locked).length;
+  const activeCount = rememberedEntries.filter(entry => entry.activeNow && getEntryAgeMs(entry) <= ACTIVE_AGE_MS).length;
+
+  if (bleRememberedBadge) bleRememberedBadge.textContent = `Remembered: ${rememberedEntries.length}`;
+  if (bleMemoryInfo) bleMemoryInfo.textContent = `BLE memory stored locally in this browser • ${activeCount} active • ${lockedCount} locked • max ${MEMORY_LIMIT}`;
+
+  if (state === "error") {
+    setBleStatus("BLE scanner error", "bad");
+  } else if (!enabled) {
+    setBleStatus("BLE scanner paused", "warn");
+  } else if ((matchSummary.total || 0) > 0) {
+    setBleStatus(`BLE scanner running - ${matchSummary.total} candidate matches`, "good");
+  } else {
+    setBleStatus("BLE scanner running", "good");
+  }
+
+  if (!bleDevicesBody) return;
+
+  if (!rememberedEntries.length) {
+    bleDevicesBody.innerHTML = `
+      <tr>
+        <td colspan="8" class="muted">No BLE devices captured yet.</td>
+      </tr>
+    `;
+    return;
+  }
+
+  bleDevicesBody.innerHTML = rememberedEntries.map((entry) => {
+    const match = entry.match || {};
+    const confidence = match.confidence || "none";
+    const matched = Boolean(match.matched);
+
+    const familyLabelMap = {
+      penguin: "Penguin",
+      fs_battery: "FS Battery",
+      raven: "Raven",
+      soundthinking: "SoundThinking",
+      flock_like: "Flock-like",
+      unknown: "Unknown"
+    };
+
+    const familyLabel = familyLabelMap[match.family] || (match.family || "candidate");
+    const matchText = matched
+      ? `${familyLabel} • ${confidence.toUpperCase()}`
+      : "No match";
+
+    const distanceClass = match.proximity || "unknown";
+    const distanceText = match.proximityLabel || "Unknown";
+
+    const whyParts = Array.isArray(match.reasons) ? match.reasons.slice(0, 3) : [];
+    if (match.ravenFirmwareGuess && match.ravenFirmwareGuess !== "?") {
+      whyParts.push(`FW ${match.ravenFirmwareGuess}`);
+    }
+    const why = whyParts.length ? whyParts.join(" • ") : "--";
+
+    const rowClasses = [];
+    if (matched) rowClasses.push(`ble-row-${confidence}`);
+    const staleClass = getStaleClass(entry);
+    if (staleClass) rowClasses.push(staleClass);
+    if (entry.locked) rowClasses.push("memory-row-locked");
+
+    const matchPillClass = matched ? `ble-match-pill ble-match-${confidence}` : "ble-match-pill";
+    const distancePillClass = `ble-distance-pill ble-distance-${distanceClass}`;
+
+    const relatedHtml = entry.related
+      ? `
+        <div class="ble-related">
+          <div>${escapeHtml(entry.related.label)}</div>
+          <div class="ble-sub">${escapeHtml(entry.related.confidence.toUpperCase())} • ${escapeHtml(entry.related.reason)}</div>
+          ${entry.related.sublabel ? `<div class="ble-sub">${escapeHtml(entry.related.sublabel)}</div>` : ""}
+        </div>
+      `
+      : `<span class="muted">—</span>`;
+
+    return `
+      <tr class="${rowClasses.join(" ")}">
+        <td>
+          <span class="ble-name">${escapeHtml(getBleDisplayLabel(entry))}</span>
+          <span class="ble-sub">${escapeHtml(entry.address || "--")}</span>
+        </td>
+        <td><span class="${matchPillClass}">${escapeHtml(matchText)}</span></td>
+        <td>${escapeHtml(typeof entry.last_rssi === "number" ? `${entry.last_rssi} dBm` : "--")}</td>
+        <td><span class="${distancePillClass}">${escapeHtml(distanceText)}</span></td>
+        <td>
+          <div>${escapeHtml(`${entry.seen_count ?? 0}x`)}</div>
+          <div class="ble-sub">${escapeHtml(getSeenLabel(entry))}</div>
+        </td>
+        <td>${relatedHtml}</td>
+        <td class="ble-why">${escapeHtml(why)}</td>
+        <td>
+          <button
+            class="tiny-btn ${entry.locked ? "locked" : ""}"
+            data-ble-lock="${escapeHtml(entry.key)}"
+            type="button"
+          >${entry.locked ? "Unlock" : "Lock"}</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+async function loadBleData() {
+  if (!bleStatusText) return;
+
+  try {
+    const [statusData, summaryData] = await Promise.all([
+      fetchJson("/api/ble/status"),
+      fetchJson("/api/ble/summary")
+    ]);
+
+    renderBleData(statusData.status, summaryData.summary);
+  } catch (err) {
+    setBleStatus(`BLE load failed: ${err.message}`, "bad");
+  }
+}
+
+async function startBleScanner() {
+  try {
+    setBleStatus("Starting BLE scanner...", "warn");
+    await fetchJson("/api/ble/start", { method: "POST" });
+    setTimeout(loadBleData, 500);
+  } catch (err) {
+    setBleStatus(`BLE start failed: ${err.message}`, "bad");
+  }
+}
+
+async function stopBleScanner() {
+  try {
+    setBleStatus("Stopping BLE scanner...", "warn");
+    await fetchJson("/api/ble/stop", { method: "POST" });
+    setTimeout(loadBleData, 500);
+  } catch (err) {
+    setBleStatus(`BLE stop failed: ${err.message}`, "bad");
+  }
+}
+
+function renderWifiData(status, summaryData) {
+  if (!wifiStatusText) return;
+
+  lastWifiStatus = status || null;
+  lastWifiSummary = summaryData || null;
+
+  mergeWifiMemory(summaryData);
+  recomputeRelatedLinks();
+
+  const enabled = Boolean(status?.enabled);
+  const state = status?.status || summaryData?.status || (enabled ? "running" : "paused");
+
+  if (wifiStateBadge) wifiStateBadge.textContent = `Wi-Fi: ${String(state).toUpperCase()}`;
+  if (wifiUniqueBadge) wifiUniqueBadge.textContent = `Unique: ${summaryData?.total_unique_seen ?? 0}`;
+  if (wifiActiveBadge) wifiActiveBadge.textContent = `Active: ${summaryData?.active_unique_seen ?? 0}`;
+  if (wifiEventsBadge) wifiEventsBadge.textContent = `Events: ${summaryData?.total_events ?? 0}`;
+
+  const matchSummary = summaryData?.matches || {};
+  if (wifiMatchBadge) wifiMatchBadge.textContent = `Matches: ${matchSummary.total ?? 0}`;
+  if (wifiMatchBreakdownBadge) {
+    wifiMatchBreakdownBadge.textContent = `H/M/L: ${matchSummary.high ?? 0}/${matchSummary.medium ?? 0}/${matchSummary.low ?? 0}`;
+  }
+
+  if (wifiStartBtn) wifiStartBtn.disabled = enabled;
+  if (wifiStopBtn) wifiStopBtn.disabled = !enabled;
+
+  const strongest = matchSummary.strongest || summaryData?.strongest_active;
+  if (wifiStrongestBadge) {
+    if (strongest && typeof strongest.last_signal === "number") {
+      const name = strongest.ssid || strongest.bssid || "unknown";
+      wifiStrongestBadge.textContent = `Strongest: ${name} (${strongest.last_signal}%)`;
+    } else {
+      wifiStrongestBadge.textContent = "Strongest: --";
+    }
+  }
+
+  const rememberedEntries = getWifiMemoryEntriesSorted();
+  const lockedCount = rememberedEntries.filter(entry => entry.locked).length;
+  const activeCount = rememberedEntries.filter(entry => entry.activeNow && getEntryAgeMs(entry) <= ACTIVE_AGE_MS).length;
+
+  if (wifiRememberedBadge) wifiRememberedBadge.textContent = `Remembered: ${rememberedEntries.length}`;
+  if (wifiMemoryInfo) wifiMemoryInfo.textContent = `Wi-Fi memory stored locally in this browser • ${activeCount} active • ${lockedCount} locked • max ${MEMORY_LIMIT}`;
+
+  if (state === "error") {
+    setWifiStatus("Wi-Fi scanner error", "bad");
+  } else if (!enabled) {
+    setWifiStatus("Wi-Fi scanner paused", "warn");
+  } else if ((matchSummary.total || 0) > 0) {
+    setWifiStatus(`Wi-Fi scanner running - ${matchSummary.total} candidate matches`, "good");
+  } else {
+    setWifiStatus("Wi-Fi scanner running", "good");
+  }
+
+  if (!wifiNetworksBody) return;
+
+  if (!rememberedEntries.length) {
+    wifiNetworksBody.innerHTML = `
+      <tr>
+        <td colspan="8" class="muted">No Wi-Fi networks captured yet.</td>
+      </tr>
+    `;
+    return;
+  }
+
+  wifiNetworksBody.innerHTML = rememberedEntries.map((entry) => {
+    const match = entry.match || {};
+    const confidence = match.confidence || "none";
+    const matched = Boolean(match.matched);
+    const matchText = matched
+      ? `Flock Wi-Fi • ${confidence.toUpperCase()}`
+      : "No match";
+
+    const distanceClass = match.proximity || "unknown";
+    const distanceText = match.proximityLabel || "Unknown";
+    const why = Array.isArray(match.reasons) && match.reasons.length
+      ? match.reasons.slice(0, 3).join(" • ")
+      : "--";
+
+    const rowClasses = [];
+    const staleClass = getStaleClass(entry);
+    if (staleClass) rowClasses.push(staleClass);
+    if (entry.locked) rowClasses.push("memory-row-locked");
+
+    const matchPillClass = matched ? `wifi-match-pill wifi-match-${confidence}` : "wifi-match-pill";
+    const distancePillClass = `wifi-distance-pill wifi-distance-${distanceClass}`;
+
+    const relatedHtml = entry.related
+      ? `
+        <div class="wifi-related">
+          <div>${escapeHtml(entry.related.label)}</div>
+          <div class="wifi-sub">${escapeHtml(entry.related.confidence.toUpperCase())} • ${escapeHtml(entry.related.reason)}</div>
+          ${entry.related.sublabel ? `<div class="wifi-sub">${escapeHtml(entry.related.sublabel)}</div>` : ""}
+        </div>
+      `
+      : `<span class="muted">—</span>`;
+
+    return `
+      <tr class="${rowClasses.join(" ")}">
+        <td>
+          <span class="wifi-name">${escapeHtml(getWifiDisplayLabel(entry))}</span>
+          <span class="wifi-sub">${escapeHtml(entry.bssid || "--")}</span>
+        </td>
+        <td><span class="${matchPillClass}">${escapeHtml(matchText)}</span></td>
+        <td>${escapeHtml(typeof entry.last_signal === "number" ? `${entry.last_signal}%` : "--")}</td>
+        <td><span class="${distancePillClass}">${escapeHtml(distanceText)}</span></td>
+        <td>
+          <div>${escapeHtml(`${entry.seen_count ?? 0}x`)}</div>
+          <div class="wifi-sub">${escapeHtml(getSeenLabel(entry))}</div>
+        </td>
+        <td>${relatedHtml}</td>
+        <td class="wifi-why">${escapeHtml(why)}</td>
+        <td>
+          <button
+            class="tiny-btn ${entry.locked ? "locked" : ""}"
+            data-wifi-lock="${escapeHtml(entry.key)}"
+            type="button"
+          >${entry.locked ? "Unlock" : "Lock"}</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+async function loadWifiData() {
+  if (!wifiStatusText) return;
+
+  try {
+    const [statusData, summaryData] = await Promise.all([
+      fetchJson("/api/wifi/status"),
+      fetchJson("/api/wifi/summary")
+    ]);
+
+    renderWifiData(statusData.status, summaryData.summary);
+  } catch (err) {
+    setWifiStatus(`Wi-Fi load failed: ${err.message}`, "bad");
+  }
+}
+
+async function startWifiScanner() {
+  try {
+    setWifiStatus("Starting Wi-Fi scanner...", "warn");
+    await fetchJson("/api/wifi/start", { method: "POST" });
+    setTimeout(loadWifiData, 500);
+  } catch (err) {
+    setWifiStatus(`Wi-Fi start failed: ${err.message}`, "bad");
+  }
+}
+
+async function stopWifiScanner() {
+  try {
+    setWifiStatus("Stopping Wi-Fi scanner...", "warn");
+    await fetchJson("/api/wifi/stop", { method: "POST" });
+    setTimeout(loadWifiData, 500);
+  } catch (err) {
+    setWifiStatus(`Wi-Fi stop failed: ${err.message}`, "bad");
+  }
+}
+
+function clearBleMemory() {
+  bleMemory = {};
+  saveMemoryStore(BLE_MEMORY_KEY, bleMemory);
+  recomputeRelatedLinks();
+  if (lastBleStatus || lastBleSummary) {
+    renderBleData(lastBleStatus || {}, lastBleSummary || { devices: [] });
+  } else if (bleDevicesBody) {
+    bleDevicesBody.innerHTML = `<tr><td colspan="8" class="muted">No BLE devices captured yet.</td></tr>`;
+  }
+}
+
+function clearWifiMemory() {
+  wifiMemory = {};
+  saveMemoryStore(WIFI_MEMORY_KEY, wifiMemory);
+  recomputeRelatedLinks();
+  if (lastWifiStatus || lastWifiSummary) {
+    renderWifiData(lastWifiStatus || {}, lastWifiSummary || { networks: [] });
+  } else if (wifiNetworksBody) {
+    wifiNetworksBody.innerHTML = `<tr><td colspan="8" class="muted">No Wi-Fi networks captured yet.</td></tr>`;
+  }
+}
+
+function toggleBleLock(key) {
+  if (!bleMemory[key]) return;
+  bleMemory[key].locked = !bleMemory[key].locked;
+  saveAllMemory();
+  if (lastBleStatus || lastBleSummary) renderBleData(lastBleStatus || {}, lastBleSummary || {});
+}
+
+function toggleWifiLock(key) {
+  if (!wifiMemory[key]) return;
+  wifiMemory[key].locked = !wifiMemory[key].locked;
+  saveAllMemory();
+  if (lastWifiStatus || lastWifiSummary) renderWifiData(lastWifiStatus || {}, lastWifiSummary || {});
+}
+
 function populateScanner(scanner) {
   currentScanner = scanner;
 
   const parsedSurvey = parseSurveyRangeString(scanner.survey?.freqRange || "");
-  surveyStartMHz.value = parsedSurvey.startMHz;
-  surveyStopMHz.value = parsedSurvey.stopMHz;
-  surveyBinKhz.value = parsedSurvey.binKhz;
+  if (surveyStartMHz) surveyStartMHz.value = parsedSurvey.startMHz;
+  if (surveyStopMHz) surveyStopMHz.value = parsedSurvey.stopMHz;
+  if (surveyBinKhz) surveyBinKhz.value = parsedSurvey.binKhz;
 
-  surveyInterval.value = scanner.survey?.interval || "";
-  surveyWindow.value = scanner.survey?.window || "";
+  if (surveyInterval) surveyInterval.value = scanner.survey?.interval || "";
+  if (surveyWindow) surveyWindow.value = scanner.survey?.window || "";
 
-  trackSpanKhz.value = Math.round(Number(scanner.track?.spanHz || 0) / 1000) || "";
-  trackBinKhz.value = Math.round(Number(scanner.track?.binHz || 0) / 1000) || "";
-  trackInterval.value = scanner.track?.interval || "";
-  trackWindow.value = scanner.track?.window || "";
+  if (trackSpanKhz) trackSpanKhz.value = Math.round(Number(scanner.track?.spanHz || 0) / 1000) || "";
+  if (trackBinKhz) trackBinKhz.value = Math.round(Number(scanner.track?.binHz || 0) / 1000) || "";
+  if (trackInterval) trackInterval.value = scanner.track?.interval || "";
+  if (trackWindow) trackWindow.value = scanner.track?.window || "";
 
-  listenFrequency.value = scanner.listen?.frequency || scanner.targetFrequency || "";
-  listenModulation.value = scanner.listen?.modulation || "fm";
-  listenGain.value = Number(scanner.listen?.gain ?? 30);
-  listenSquelch.value = Number(scanner.listen?.squelch ?? 0);
+  if (listenFrequency) listenFrequency.value = scanner.listen?.frequency || scanner.targetFrequency || "";
+  if (listenModulation) listenModulation.value = scanner.listen?.modulation || "fm";
+  if (listenGain) listenGain.value = Number(scanner.listen?.gain ?? 30);
+  if (listenSquelch) listenSquelch.value = Number(scanner.listen?.squelch ?? 0);
 
-  if (scanner.mode === "paused") {
-    scannerStatus.textContent = `Mode: paused | resume: ${scanner.lastActiveMode || "survey"}`;
-  } else if (scanner.mode === "listen") {
-    scannerStatus.textContent = `Mode: listen | ${scanner.listen?.frequency || scanner.targetFrequency || "no frequency"}`;
-  } else {
-    scannerStatus.textContent = `Mode: ${scanner.mode} | ${scanner.freqRange}`;
+  if (scannerStatus) {
+    if (scanner.mode === "paused") {
+      scannerStatus.textContent = `Mode: paused | resume: ${scanner.lastActiveMode || "survey"}`;
+    } else if (scanner.mode === "listen") {
+      scannerStatus.textContent = `Mode: listen | ${scanner.listen?.frequency || scanner.targetFrequency || "no frequency"}`;
+    } else {
+      scannerStatus.textContent = `Mode: ${scanner.mode} | ${scanner.freqRange}`;
+    }
   }
 
   if (scanner.mode === "track" && scanner.track && Number.isFinite(Number(scanner.track.centerHz))) {
@@ -916,7 +1868,7 @@ async function applySettings(save = false) {
     });
 
     populateSettings(data.settings);
-    settingsStatus.textContent = save ? "Defaults saved" : "Settings applied";
+    if (settingsStatus) settingsStatus.textContent = save ? "Defaults saved" : "Settings applied";
     setUiMessage(save ? "Viewer defaults saved" : "Viewer settings applied", "good");
     await loadCurrent();
   } catch (err) {
@@ -935,7 +1887,7 @@ async function runScannerConfig() {
       ...scannerPayload()
     };
   } catch (err) {
-    scannerStatus.textContent = err.message;
+    if (scannerStatus) scannerStatus.textContent = err.message;
     setUiMessage(err.message, "bad");
     return;
   }
@@ -971,7 +1923,7 @@ async function saveScannerConfig() {
       ...scannerPayload()
     };
   } catch (err) {
-    scannerStatus.textContent = err.message;
+    if (scannerStatus) scannerStatus.textContent = err.message;
     setUiMessage(err.message, "bad");
     return;
   }
@@ -1019,7 +1971,7 @@ async function setSurveyMode() {
 
 async function setTrackMode() {
   if (!selectedHz) {
-    scannerStatus.textContent = "Select a frequency first";
+    if (scannerStatus) scannerStatus.textContent = "Select a frequency first";
     setUiMessage("Select a frequency before entering track mode", "warn");
     return;
   }
@@ -1031,10 +1983,10 @@ async function setTrackMode() {
   try {
     const payload = {
       centerHz: selectedHz,
-      spanHz: Number(trackSpanKhz.value) * 1000,
-      binHz: Number(trackBinKhz.value) * 1000,
-      interval: trackInterval.value.trim(),
-      window: trackWindow.value.trim()
+      spanHz: Number(trackSpanKhz?.value) * 1000,
+      binHz: Number(trackBinKhz?.value) * 1000,
+      interval: trackInterval?.value.trim(),
+      window: trackWindow?.value.trim()
     };
 
     const data = await fetchJson("/api/scanner/track", {
@@ -1099,10 +2051,10 @@ async function togglePauseScanner() {
 }
 
 async function startListenMode() {
-  const normalizedFreq = normalizeFrequencyInput(listenFrequency.value);
-  const modulation = String(listenModulation.value || "fm").toLowerCase();
-  const gain = Number(listenGain.value);
-  const squelch = Number(listenSquelch.value);
+  const normalizedFreq = normalizeFrequencyInput(listenFrequency?.value);
+  const modulation = String(listenModulation?.value || "fm").toLowerCase();
+  const gain = Number(listenGain?.value);
+  const squelch = Number(listenSquelch?.value);
 
   if (!normalizedFreq) {
     setListenStatus("Enter a valid frequency like 162.55M or 99.5M", "bad");
@@ -1110,7 +2062,7 @@ async function startListenMode() {
     return;
   }
 
-  listenFrequency.value = normalizedFreq;
+  if (listenFrequency) listenFrequency.value = normalizedFreq;
 
   beginScannerTransition(`Switching to listen on ${normalizedFreq}...`);
   showBusy("Starting listen mode", `Tuning ${normalizedFreq}`);
@@ -1164,10 +2116,12 @@ async function stopListenMode() {
 async function loadFiles() {
   try {
     const data = await fetchJson("/api/files");
-    fileSelect.innerHTML = data.files.map(f => `<option value="${f}">${f}</option>`).join("");
-    if (data.files.length) {
-      fileSelect.value = "live";
-      await loadCurrent();
+    if (fileSelect) {
+      fileSelect.innerHTML = data.files.map(f => `<option value="${f}">${f}</option>`).join("");
+      if (data.files.length) {
+        fileSelect.value = "live";
+        await loadCurrent();
+      }
     }
   } catch (err) {
     setUiMessage(`File list failed: ${err.message}`, "bad");
@@ -1175,7 +2129,7 @@ async function loadFiles() {
 }
 
 async function loadCurrent() {
-  const selected = fileSelect.value;
+  const selected = fileSelect?.value;
   const endpoint = selected === "live"
     ? "/api/live"
     : `/api/data?file=${encodeURIComponent(selected)}`;
@@ -1192,136 +2146,183 @@ function updateTimer() {
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = null;
 
-  if (liveMode.checked && fileSelect.value === "live") {
+  if (liveMode?.checked && fileSelect?.value === "live") {
     refreshTimer = setInterval(loadCurrent, 2000);
   }
 }
 
 function updateDiagnosticsTimer() {
   if (diagnosticsTimer) clearInterval(diagnosticsTimer);
-  diagnosticsTimer = setInterval(loadListenDiagnostics, 2000);
+  if (listenPipelineStatus) {
+    diagnosticsTimer = setInterval(loadListenDiagnostics, 2000);
+  }
+}
+
+function updateBleTimer() {
+  if (bleTimer) clearInterval(bleTimer);
+  if (bleStatusText) {
+    bleTimer = setInterval(loadBleData, 2000);
+  }
+}
+
+function updateWifiTimer() {
+  if (wifiTimer) clearInterval(wifiTimer);
+  if (wifiStatusText) {
+    wifiTimer = setInterval(loadWifiData, 3000);
+  }
 }
 
 async function refreshRecordStatus() {
   try {
     const data = await fetchJson("/api/record/status");
-    recordStatus.textContent = data.recording
-      ? `Recording (${data.rows} rows)`
-      : `Not recording`;
+    if (recordStatus) {
+      recordStatus.textContent = data.recording
+        ? `Recording (${data.rows} rows)`
+        : "Not recording";
+    }
   } catch (err) {
     setUiMessage(`Record status failed: ${err.message}`, "bad");
   }
 }
 
-fileSelect.addEventListener("change", async () => {
-  await loadCurrent();
-  updateTimer();
-});
+if (fileSelect) {
+  fileSelect.addEventListener("change", async () => {
+    await loadCurrent();
+    updateTimer();
+  });
+}
 
-liveMode.addEventListener("change", updateTimer);
+if (liveMode) {
+  liveMode.addEventListener("change", updateTimer);
+}
 
-recordBtn.addEventListener("click", async () => {
-  try {
-    await fetchJson("/api/record/start");
-    refreshRecordStatus();
-    setUiMessage("Recording started", "good");
-  } catch (err) {
-    setUiMessage(`Record start failed: ${err.message}`, "bad");
-  }
-});
+if (recordBtn) {
+  recordBtn.addEventListener("click", async () => {
+    try {
+      await fetchJson("/api/record/start");
+      refreshRecordStatus();
+      setUiMessage("Recording started", "good");
+    } catch (err) {
+      setUiMessage(`Record start failed: ${err.message}`, "bad");
+    }
+  });
+}
 
-stopBtn.addEventListener("click", async () => {
-  try {
-    await fetchJson("/api/record/stop");
-    refreshRecordStatus();
-    setUiMessage("Recording stopped", "good");
-  } catch (err) {
-    setUiMessage(`Record stop failed: ${err.message}`, "bad");
-  }
-});
+if (stopBtn) {
+  stopBtn.addEventListener("click", async () => {
+    try {
+      await fetchJson("/api/record/stop");
+      refreshRecordStatus();
+      setUiMessage("Recording stopped", "good");
+    } catch (err) {
+      setUiMessage(`Record stop failed: ${err.message}`, "bad");
+    }
+  });
+}
 
-applySettingsBtn.addEventListener("click", async () => {
-  await applySettings(false);
-});
+if (applySettingsBtn) applySettingsBtn.addEventListener("click", async () => applySettings(false));
+if (saveSettingsBtn) saveSettingsBtn.addEventListener("click", async () => applySettings(true));
+if (runScannerBtn) runScannerBtn.addEventListener("click", runScannerConfig);
+if (saveScannerBtn) saveScannerBtn.addEventListener("click", saveScannerConfig);
+if (trackBtn) trackBtn.addEventListener("click", setTrackMode);
+if (surveyBtn) surveyBtn.addEventListener("click", setSurveyMode);
+if (pauseBtn) pauseBtn.addEventListener("click", togglePauseScanner);
+if (listenStartBtn) listenStartBtn.addEventListener("click", startListenMode);
+if (listenStopBtn) listenStopBtn.addEventListener("click", stopListenMode);
+if (playBrowserAudioBtn) playBrowserAudioBtn.addEventListener("click", playBrowserAudio);
+if (stopBrowserAudioBtn) stopBrowserAudioBtn.addEventListener("click", () => stopBrowserAudio());
+if (bleStartBtn) bleStartBtn.addEventListener("click", startBleScanner);
+if (bleStopBtn) bleStopBtn.addEventListener("click", stopBleScanner);
+if (bleClearMemoryBtn) bleClearMemoryBtn.addEventListener("click", clearBleMemory);
+if (wifiStartBtn) wifiStartBtn.addEventListener("click", startWifiScanner);
+if (wifiStopBtn) wifiStopBtn.addEventListener("click", stopWifiScanner);
+if (wifiClearMemoryBtn) wifiClearMemoryBtn.addEventListener("click", clearWifiMemory);
 
-saveSettingsBtn.addEventListener("click", async () => {
-  await applySettings(true);
-});
+if (bleDevicesBody) {
+  bleDevicesBody.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-ble-lock]");
+    if (!btn) return;
+    toggleBleLock(btn.getAttribute("data-ble-lock"));
+  });
+}
 
-runScannerBtn.addEventListener("click", runScannerConfig);
-saveScannerBtn.addEventListener("click", saveScannerConfig);
-trackBtn.addEventListener("click", setTrackMode);
-surveyBtn.addEventListener("click", setSurveyMode);
-pauseBtn.addEventListener("click", togglePauseScanner);
-listenStartBtn.addEventListener("click", startListenMode);
-listenStopBtn.addEventListener("click", stopListenMode);
-playBrowserAudioBtn.addEventListener("click", playBrowserAudio);
-stopBrowserAudioBtn.addEventListener("click", () => stopBrowserAudio());
+if (wifiNetworksBody) {
+  wifiNetworksBody.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-wifi-lock]");
+    if (!btn) return;
+    toggleWifiLock(btn.getAttribute("data-wifi-lock"));
+  });
+}
 
-proximityEnabled.addEventListener("change", () => {
-  resetProximitySession();
-});
+if (proximityEnabled) {
+  proximityEnabled.addEventListener("change", () => {
+    resetProximitySession();
+  });
+}
 
-audioEnabled.addEventListener("change", () => {
-  if (audioEnabled.checked) {
-    ensureAudioContext();
-  }
-});
+if (audioEnabled) {
+  audioEnabled.addEventListener("change", () => {
+    if (audioEnabled.checked) {
+      ensureAudioContext();
+    }
+  });
+}
 
-listenBrowserAudio.addEventListener("playing", () => {
-  browserAudioActive = true;
-  setListenPipelineStatus("Browser audio playing", "good");
-});
+if (listenBrowserAudio) {
+  listenBrowserAudio.addEventListener("playing", () => {
+    browserAudioActive = true;
+    setListenPipelineStatus("Browser audio playing", "good");
+  });
 
-listenBrowserAudio.addEventListener("pause", () => {
-  if (!listenBrowserAudio.ended && browserAudioActive) {
-    setListenPipelineStatus("Browser audio paused", "warn");
-  }
-});
+  listenBrowserAudio.addEventListener("pause", () => {
+    if (!listenBrowserAudio.ended && browserAudioActive) {
+      setListenPipelineStatus("Browser audio paused", "warn");
+    }
+  });
 
-listenBrowserAudio.addEventListener("ended", () => {
-  browserAudioActive = false;
-  setListenPipelineStatus("Browser audio ended", "warn");
-});
+  listenBrowserAudio.addEventListener("ended", () => {
+    browserAudioActive = false;
+    setListenPipelineStatus("Browser audio ended", "warn");
+  });
 
-listenBrowserAudio.addEventListener("error", () => {
-  browserAudioActive = false;
-  const mediaError = listenBrowserAudio.error;
-  const message = mediaError ? `Browser audio error code ${mediaError.code}` : "Browser audio error";
-  setListenPipelineStatus(message, "bad");
-});
+  listenBrowserAudio.addEventListener("error", () => {
+    browserAudioActive = false;
+    const mediaError = listenBrowserAudio.error;
+    const message = mediaError ? `Browser audio error code ${mediaError.code}` : "Browser audio error";
+    setListenPipelineStatus(message, "bad");
+  });
+}
 
-canvas.addEventListener("click", (e) => {
-  if (!currentTrace.length) return;
+if (canvas) {
+  canvas.addEventListener("click", (e) => {
+    if (!currentTrace.length) return;
 
-  const rect = canvas.getBoundingClientRect();
-  const clickX = e.clientX - rect.left;
+    const rect = canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
 
-  const pad = 30;
-  const w = canvas.width - pad * 2;
+    const pad = 30;
+    const w = canvas.width - pad * 2;
 
-  const minX = currentTrace[0].hz;
-  const maxX = currentTrace[currentTrace.length - 1].hz;
+    const minX = currentTrace[0].hz;
+    const maxX = currentTrace[currentTrace.length - 1].hz;
 
-  const canvasX = (clickX / rect.width) * canvas.width;
-  const clamped = Math.max(pad, Math.min(canvasX, canvas.width - pad));
-  const ratio = (clamped - pad) / w;
-  const hz = minX + ratio * (maxX - minX);
+    const canvasX = (clickX / rect.width) * canvas.width;
+    const clamped = Math.max(pad, Math.min(canvasX, canvas.width - pad));
+    const ratio = (clamped - pad) / w;
+    const hz = minX + ratio * (maxX - minX);
 
-  selectedHz = Math.round(hz);
-  clickedFreq.textContent = `Selected: ${fmtHz(selectedHz)} (${selectedHz} Hz)`;
-  proximityTarget.textContent = fmtHz(selectedHz);
+    selectedHz = Math.round(hz);
+    if (clickedFreq) clickedFreq.textContent = `Selected: ${fmtHz(selectedHz)} (${selectedHz} Hz)`;
+    if (proximityTarget) proximityTarget.textContent = fmtHz(selectedHz);
 
-  listenFrequency.value = hzToMString(selectedHz);
+    if (listenFrequency) listenFrequency.value = hzToMString(selectedHz);
+    if (listenModulation) listenModulation.value = guessListenModulationFromHz(selectedHz);
 
-  if (listenModulation) {
-    listenModulation.value = guessListenModulationFromHz(selectedHz);
-  }
-
-  if (currentScanner && currentScanner.mode === "track") {
-    lockedFreqBadge.textContent = `Locked: ${fmtHz(selectedHz)}`;
-  }
-});
+    if (currentScanner && currentScanner.mode === "track" && lockedFreqBadge) {
+      lockedFreqBadge.textContent = `Locked: ${fmtHz(selectedHz)}`;
+    }
+  });
+}
 
 document.querySelectorAll("[data-collapse-toggle]").forEach((header) => {
   header.addEventListener("click", (e) => {
@@ -1332,7 +2333,7 @@ document.querySelectorAll("[data-collapse-toggle]").forEach((header) => {
     const card = header.closest("[data-card]");
     const btn = header.querySelector(".collapse-btn");
     card.classList.toggle("collapsed");
-    btn.textContent = card.classList.contains("collapsed") ? "+" : "−";
+    if (btn) btn.textContent = card.classList.contains("collapsed") ? "+" : "−";
   });
 });
 
@@ -1349,8 +2350,12 @@ window.addEventListener("unhandledrejection", (event) => {
 Promise.all([loadSettings(), loadScanner(), loadFiles()]).then(async () => {
   updateTimer();
   updateDiagnosticsTimer();
+  updateBleTimer();
+  updateWifiTimer();
   await refreshRecordStatus();
   await loadListenDiagnostics();
+  await loadBleData();
+  await loadWifiData();
   updateProximityUI(null);
   updateModeUi();
   setListenStatus("Not listening", "good");
