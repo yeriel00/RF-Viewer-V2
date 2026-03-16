@@ -189,6 +189,14 @@ let listenRawBus = null;
 let listenPipelineKey = null;
 const listenAudioClients = new Set();
 const listenLog = [];
+const LISTEN_MODE_RELEASE_DELAY_MS = Math.max(0, Number(process.env.LISTEN_MODE_RELEASE_DELAY_MS || 700));
+const LISTEN_START_MAX_RETRIES = Math.max(1, Number(process.env.LISTEN_START_MAX_RETRIES || 4));
+const LISTEN_START_RETRY_DELAY_MS = Math.max(100, Number(process.env.LISTEN_START_RETRY_DELAY_MS || 700));
+
+let listenRetryTimer = null;
+let listenStartAttempts = 0;
+let listenExpectedPipelineKey = null;
+let listenLastError = "";
 
 let listenStatus = {
   active: false,
@@ -238,6 +246,74 @@ function isChildAlive(child) {
   return !!(child && !child.killed && child.exitCode == null);
 }
 
+function clearListenRetryTimer() {
+  if (listenRetryTimer) {
+    clearTimeout(listenRetryTimer);
+    listenRetryTimer = null;
+  }
+}
+
+function isRetryableListenError(message) {
+  const text = String(message || "").toLowerCase();
+  return [
+    "usb_claim_interface error",
+    "failed to open rtlsdr device",
+    "resource busy",
+    "device or resource busy",
+    "no supported devices found"
+  ].some(pattern => text.includes(pattern));
+}
+
+function buildRuntimeScanner(scanner) {
+  const runtime = JSON.parse(JSON.stringify(scanner));
+
+  if (runtime.mode === "listen" && runtime.listen?.enabled) {
+    runtime.mode = "paused";
+    runtime.freqRange = "";
+    runtime.interval = "";
+    runtime.window = "";
+  }
+
+  return runtime;
+}
+
+function scheduleListenRetry(scanner, reason) {
+  if (currentScanner.mode !== "listen" || !currentScanner.listen?.enabled) {
+    return false;
+  }
+
+  if (listenStartAttempts >= LISTEN_START_MAX_RETRIES) {
+    return false;
+  }
+
+  clearListenRetryTimer();
+  listenStartAttempts += 1;
+
+  const delayMs = listenStartAttempts === 1
+    ? LISTEN_MODE_RELEASE_DELAY_MS
+    : LISTEN_START_RETRY_DELAY_MS;
+
+  setListenStatus({
+    active: false,
+    state: "starting",
+    message: `${reason} — retry ${listenStartAttempts}/${LISTEN_START_MAX_RETRIES} in ${delayMs}ms`,
+    startedAt: null
+  });
+
+  appendListenLog(
+    `Scheduling listen retry ${listenStartAttempts}/${LISTEN_START_MAX_RETRIES} in ${delayMs}ms: ${reason}`
+  );
+
+  listenRetryTimer = setTimeout(() => {
+    listenRetryTimer = null;
+    if (currentScanner.mode === "listen" && currentScanner.listen?.enabled) {
+      startListenAudioPipeline(scanner, { isRetry: true });
+    }
+  }, delayMs);
+
+  return true;
+}
+
 function endListenAudioClients() {
   for (const res of listenAudioClients) {
     try {
@@ -266,7 +342,15 @@ function killChild(child, name) {
   }
 }
 
-function stopListenAudioPipeline(reason = "Listen pipeline stopped") {
+function stopListenAudioPipeline(reason = "Listen pipeline stopped", options = {}) {
+  const { resetRetries = true } = options;
+
+  if (resetRetries) {
+    clearListenRetryTimer();
+    listenStartAttempts = 0;
+    listenExpectedPipelineKey = null;
+  }
+
   if (listenRawBus) {
     try {
       listenRawBus.destroy();
@@ -296,6 +380,7 @@ function stopListenAudioPipeline(reason = "Listen pipeline stopped") {
   listenPipelineKey = null;
 
   endListenAudioClients();
+  listenLastError = "";
 
   setListenStatus({
     active: false,
@@ -305,7 +390,8 @@ function stopListenAudioPipeline(reason = "Listen pipeline stopped") {
   });
 }
 
-function startListenAudioPipeline(scanner) {
+function startListenAudioPipeline(scanner, options = {}) {
+  const { isRetry = false } = options;
   const listen = scanner.listen || {};
   const frequency = listen.frequency || scanner.targetFrequency;
   const modulation = String(listen.modulation || "fm").toLowerCase();
@@ -346,7 +432,18 @@ function startListenAudioPipeline(scanner) {
     return true;
   }
 
-  stopListenAudioPipeline("Restarting listen pipeline");
+  if (listenExpectedPipelineKey !== nextKey) {
+    clearListenRetryTimer();
+    listenStartAttempts = 0;
+    listenExpectedPipelineKey = nextKey;
+    listenLastError = "";
+  }
+
+  if (listenExpectedPipelineKey === nextKey && listenRetryTimer && !isRetry) {
+    return true;
+  }
+
+  stopListenAudioPipeline("Restarting listen pipeline", { resetRetries: false });
 
   const sampleRate = getListenSampleRate(modulation);
   const aplayDevice = process.env.APLAY_DEVICE || "default";
@@ -383,7 +480,7 @@ function startListenAudioPipeline(scanner) {
   ];
 
   appendListenLog(
-    `Starting listen pipeline freq=${frequency} mod=${modulation} gain=${gain} squelch=${squelch} sampleRate=${sampleRate} device=${aplayDevice}`
+    `Starting listen pipeline freq=${frequency} mod=${modulation} gain=${gain} squelch=${squelch} sampleRate=${sampleRate} device=${aplayDevice}${isRetry ? ` retry=${listenStartAttempts}/${LISTEN_START_MAX_RETRIES}` : ""}`
   );
 
   listenRtlProc = spawn("rtl_fm", rtlArgs, {
@@ -408,6 +505,26 @@ function startListenAudioPipeline(scanner) {
   listenRawBus = new PassThrough();
 
   if (listenRtlProc.stdout) {
+    listenRtlProc.stdout.once("data", () => {
+      if (currentScanner.mode === "listen" && currentScanner.listen?.enabled) {
+        clearListenRetryTimer();
+        listenStartAttempts = 0;
+        listenLastError = "";
+        setListenStatus({
+          active: true,
+          state: "running",
+          message: "Listen audio pipeline running",
+          frequency,
+          modulation,
+          gain,
+          squelch,
+          sampleRate,
+          audioDevice: aplayDevice,
+          startedAt: listenStatus.startedAt || new Date().toISOString()
+        });
+      }
+    });
+
     listenRtlProc.stdout.pipe(listenRawBus);
   }
 
@@ -424,7 +541,10 @@ function startListenAudioPipeline(scanner) {
   if (listenRtlProc.stderr) {
     listenRtlProc.stderr.on("data", chunk => {
       const text = chunk.toString().trim();
-      if (text) appendListenLog(`rtl_fm: ${text}`);
+      if (text) {
+        listenLastError = text;
+        appendListenLog(`rtl_fm: ${text}`);
+      }
     });
   }
 
@@ -466,12 +586,27 @@ function startListenAudioPipeline(scanner) {
   }
 
   listenRtlProc.on("close", code => {
+    const closeMessage = code === 0
+      ? "rtl_fm exited"
+      : (listenLastError || `rtl_fm exited with code ${code}`);
+
     appendListenLog(`rtl_fm exited with code ${code}`);
+
+    if (
+      code !== 0 &&
+      currentScanner.mode === "listen" &&
+      currentScanner.listen?.enabled &&
+      isRetryableListenError(closeMessage) &&
+      scheduleListenRetry(currentScanner, closeMessage)
+    ) {
+      return;
+    }
+
     if (currentScanner.mode === "listen") {
       setListenStatus({
         active: false,
         state: code === 0 ? "stopped" : "error",
-        message: code === 0 ? "rtl_fm exited" : `rtl_fm exited with code ${code}`
+        message: closeMessage
       });
     }
   });
@@ -484,11 +619,13 @@ function startListenAudioPipeline(scanner) {
     appendListenLog(`ffmpeg exited with code ${code}`);
     if (currentScanner.mode === "listen") {
       endListenAudioClients();
-      setListenStatus({
-        active: false,
-        state: code === 0 ? "stopped" : "error",
-        message: code === 0 ? "ffmpeg exited" : `ffmpeg exited with code ${code}`
-      });
+      if (!listenRetryTimer) {
+        setListenStatus({
+          active: false,
+          state: code === 0 ? "stopped" : "error",
+          message: code === 0 ? "ffmpeg exited" : `ffmpeg exited with code ${code}`
+        });
+      }
     }
   });
 
@@ -520,9 +657,11 @@ function startListenAudioPipeline(scanner) {
   });
 
   setListenStatus({
-    active: true,
-    state: "running",
-    message: "Listen audio pipeline running",
+    active: false,
+    state: "starting",
+    message: isRetry
+      ? `Retrying listen pipeline (${Math.min(listenStartAttempts, LISTEN_START_MAX_RETRIES)}/${LISTEN_START_MAX_RETRIES})`
+      : "Listen audio pipeline starting",
     frequency,
     modulation,
     gain,
@@ -544,11 +683,96 @@ function syncListenPipeline() {
 }
 
 /* -----------------------------
-   Core helpers
+   Live file helpers
 ----------------------------- */
 
-function hzToM(hz) {
-  return `${(hz / 1e6).toFixed(6)}M`;
+function safeFilename(name) {
+  return String(name || "")
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .replace(/^_+/, "")
+    .slice(0, 200);
+}
+
+function ensureScannerDataDir() {
+  ensureDataDir();
+}
+
+function getRecordingsDir() {
+  ensureScannerDataDir();
+  const dir = path.join(DATA_DIR, "recordings");
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
+
+function listRecordingFiles() {
+  const dir = getRecordingsDir();
+  return fs.readdirSync(dir)
+    .filter(name => name.toLowerCase().endsWith(".json"))
+    .sort((a, b) => b.localeCompare(a));
+}
+
+function buildRecordingPath(name) {
+  return path.join(getRecordingsDir(), safeFilename(name));
+}
+
+function formatTimestampForFilename(date = new Date()) {
+  const pad = value => String(value).padStart(2, "0");
+  return [
+    date.getUTCFullYear(),
+    pad(date.getUTCMonth() + 1),
+    pad(date.getUTCDate())
+  ].join("") + "-" + [
+    pad(date.getUTCHours()),
+    pad(date.getUTCMinutes()),
+    pad(date.getUTCSeconds())
+  ].join("");
+}
+
+function saveRecordingFile(label = "recording") {
+  const filename = `${formatTimestampForFilename()}-${safeFilename(label || "recording")}.json`;
+  const filePath = buildRecordingPath(filename);
+
+  const payload = {
+    label,
+    createdAt: new Date().toISOString(),
+    rows: recordedRows
+  };
+
+  fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
+  return filename;
+}
+
+function readRecordingFile(name) {
+  const filePath = buildRecordingPath(name);
+  if (!filePath.startsWith(getRecordingsDir())) {
+    throw new Error("Invalid recording path");
+  }
+
+  if (!fs.existsSync(filePath)) {
+    throw new Error("Recording not found");
+  }
+
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
+function deleteRecordingFile(name) {
+  const filePath = buildRecordingPath(name);
+  if (!filePath.startsWith(getRecordingsDir())) {
+    throw new Error("Invalid recording path");
+  }
+
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+  }
+}
+
+function hzToM(value) {
+  const hz = Number(value);
+  if (!Number.isFinite(hz)) return "";
+  const mhz = hz / 1000000;
+  return `${mhz.toFixed(3).replace(/\.?0+$/, "")}M`;
 }
 
 function buildTrackFreqRange(centerHz, spanHz, binHz) {
@@ -631,7 +855,7 @@ function normalizeScanner(scanner) {
 function persistScanner(scanner, { clearRows = true } = {}) {
   currentScanner = normalizeScanner(scanner);
   saveJsonFile(SCANNER_FILE, currentScanner);
-  saveJsonFile(SCANNER_RUNTIME_FILE, currentScanner);
+  saveJsonFile(SCANNER_RUNTIME_FILE, buildRuntimeScanner(currentScanner));
   if (clearRows) clearLiveRows();
   syncListenPipeline();
   return currentScanner;
@@ -647,7 +871,7 @@ function clearRecordedRows() {
 
 currentScanner = normalizeScanner(currentScanner);
 saveJsonFile(SCANNER_FILE, currentScanner);
-saveJsonFile(SCANNER_RUNTIME_FILE, currentScanner);
+saveJsonFile(SCANNER_RUNTIME_FILE, buildRuntimeScanner(currentScanner));
 ensureBleControlFile();
 ensureWifiControlFile();
 syncListenPipeline();
@@ -904,31 +1128,16 @@ const webServer = http.createServer(async (req, res) => {
       const squelch = Number(incoming.squelch ?? currentScanner.listen?.squelch ?? 0);
 
       if (!frequency) {
-        return sendJson(res, {
-          ok: false,
-          error: "A valid frequency is required, for example 162.55M or 99.5M"
-        }, 400);
+        return sendJson(res, { ok: false, error: "Missing or invalid frequency" }, 400);
       }
 
       if (!["fm", "wbfm", "am"].includes(modulation)) {
-        return sendJson(res, {
-          ok: false,
-          error: "Unsupported modulation. Use fm, wbfm, or am."
-        }, 400);
+        return sendJson(res, { ok: false, error: "Unsupported modulation" }, 400);
       }
-
-      const previousMode =
-        currentScanner.mode === "track" || currentScanner.mode === "survey"
-          ? currentScanner.mode
-          : currentScanner.lastActiveMode === "track"
-            ? "track"
-            : "survey";
 
       persistScanner({
         ...currentScanner,
         mode: "listen",
-        lastActiveMode: previousMode,
-        targetFrequency: frequency,
         listen: {
           ...currentScanner.listen,
           enabled: true,
@@ -936,12 +1145,14 @@ const webServer = http.createServer(async (req, res) => {
           modulation,
           gain,
           squelch
-        }
-      });
+        },
+        targetFrequency: frequency
+      }, { clearRows: false });
 
       return sendJson(res, {
         ok: true,
-        scanner: currentScanner
+        scanner: currentScanner,
+        status: listenStatus
       });
     } catch (e) {
       return sendJson(res, { ok: false, error: e.message }, 400);
@@ -958,116 +1169,155 @@ const webServer = http.createServer(async (req, res) => {
         ...currentScanner.listen,
         enabled: false
       }
-    });
+    }, { clearRows: false });
 
     return sendJson(res, {
       ok: true,
-      scanner: currentScanner
+      scanner: currentScanner,
+      status: listenStatus
     });
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/listen/save") {
+    try {
+      const incoming = JSON.parse((await collectRequestBody(req)) || "{}");
+      const frequency = normalizeFrequencyInput(
+        incoming.frequency ?? incoming.freq ?? currentScanner.listen?.frequency
+      );
+
+      const next = {
+        ...currentScanner,
+        listen: {
+          ...currentScanner.listen,
+          ...incoming,
+          ...(frequency ? { frequency } : {})
+        }
+      };
+
+      persistScanner(next, { clearRows: false });
+      return sendJson(res, { ok: true, scanner: currentScanner });
+    } catch (e) {
+      return sendJson(res, { ok: false, error: e.message }, 400);
+    }
+  }
+
+  if (req.method === "GET" && parsed.pathname === "/api/recordings") {
+    return sendJson(res, {
+      ok: true,
+      files: listRecordingFiles()
+    });
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/recordings/save") {
+    try {
+      const incoming = JSON.parse((await collectRequestBody(req)) || "{}");
+      const label = incoming.label || "recording";
+      const filename = saveRecordingFile(label);
+      return sendJson(res, {
+        ok: true,
+        filename
+      });
+    } catch (e) {
+      return sendJson(res, { ok: false, error: e.message }, 500);
+    }
+  }
+
+  if (req.method === "GET" && parsed.pathname === "/api/recordings/read") {
+    try {
+      const file = parsed.query.file;
+      if (!file) {
+        return sendJson(res, { ok: false, error: "Missing file" }, 400);
+      }
+      const payload = readRecordingFile(file);
+      return sendJson(res, { ok: true, ...payload });
+    } catch (e) {
+      return sendJson(res, { ok: false, error: e.message }, 404);
+    }
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/recordings/delete") {
+    try {
+      const incoming = JSON.parse((await collectRequestBody(req)) || "{}");
+      if (!incoming.file) {
+        return sendJson(res, { ok: false, error: "Missing file" }, 400);
+      }
+      deleteRecordingFile(incoming.file);
+      return sendJson(res, { ok: true });
+    } catch (e) {
+      return sendJson(res, { ok: false, error: e.message }, 404);
+    }
   }
 
   if (req.method === "GET" && parsed.pathname === "/api/ble/status") {
-    const control = readBleControl();
     const status = loadJsonDiskFile(BLE_STATUS_FILE, {
-      status: "unknown",
-      enabled: control.enabled,
-      total_unique_seen: 0,
-      active_unique_seen: 0,
-      total_events: 0
+      running: false,
+      enabled: readBleControl().enabled,
+      updated_at: null
     });
-
-    return sendJson(res, {
-      ok: true,
-      control,
-      status: {
-        ...status,
-        enabled: control.enabled
-      }
-    });
+    return sendJson(res, { ok: true, status });
   }
 
   if (req.method === "GET" && parsed.pathname === "/api/ble/summary") {
-    const control = readBleControl();
     const summary = loadJsonDiskFile(BLE_SUMMARY_FILE, {
-      status: control.enabled ? "running" : "paused",
-      enabled: control.enabled,
-      total_unique_seen: 0,
-      active_unique_seen: 0,
-      total_events: 0,
-      strongest_active: null,
-      devices: []
+      ok: true,
+      devices: [],
+      updated_at: null
     });
 
-    const enriched = enrichBleSummary({
-      ...summary,
-      enabled: control.enabled
+    const status = loadJsonDiskFile(BLE_STATUS_FILE, {
+      running: false,
+      enabled: readBleControl().enabled,
+      updated_at: null
     });
 
     return sendJson(res, {
       ok: true,
-      control,
-      summary: enriched
+      summary: enrichBleSummary(summary, {
+        enabled: status.enabled !== false
+      }),
+      status
     });
   }
 
   if (req.method === "POST" && parsed.pathname === "/api/ble/start") {
     const control = writeBleControl(true);
-    return sendJson(res, {
-      ok: true,
-      control
-    });
+    return sendJson(res, { ok: true, control });
   }
 
   if (req.method === "POST" && parsed.pathname === "/api/ble/stop") {
     const control = writeBleControl(false);
-    return sendJson(res, {
-      ok: true,
-      control
-    });
+    return sendJson(res, { ok: true, control });
   }
 
   if (req.method === "GET" && parsed.pathname === "/api/wifi/status") {
-    const control = readWifiControl();
     const status = loadJsonDiskFile(WIFI_STATUS_FILE, {
-      status: "unknown",
-      enabled: control.enabled,
-      interface: control.interface,
-      total_unique_seen: 0,
-      active_unique_seen: 0,
-      total_events: 0
+      running: false,
+      enabled: readWifiControl().enabled,
+      updated_at: null
     });
-
-    return sendJson(res, {
-      ok: true,
-      control,
-      status: {
-        ...status,
-        enabled: control.enabled
-      }
-    });
+    return sendJson(res, { ok: true, status });
   }
 
   if (req.method === "GET" && parsed.pathname === "/api/wifi/summary") {
-    const control = readWifiControl();
     const summary = loadJsonDiskFile(WIFI_SUMMARY_FILE, {
-      status: control.enabled ? "running" : "paused",
-      enabled: control.enabled,
-      total_unique_seen: 0,
-      active_unique_seen: 0,
-      total_events: 0,
-      strongest_active: null,
-      networks: []
+      ok: true,
+      aps: [],
+      clients: [],
+      updated_at: null
     });
 
-    const enriched = enrichWifiSummary({
-      ...summary,
-      enabled: control.enabled
+    const status = loadJsonDiskFile(WIFI_STATUS_FILE, {
+      running: false,
+      enabled: readWifiControl().enabled,
+      updated_at: null
     });
 
     return sendJson(res, {
       ok: true,
-      control,
-      summary: enriched
+      summary: enrichWifiSummary(summary, {
+        enabled: status.enabled !== false
+      }),
+      status
     });
   }
 
