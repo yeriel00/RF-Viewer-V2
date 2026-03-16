@@ -104,6 +104,15 @@ const busyOverlay = document.getElementById("busyOverlay");
 const busyTitle = document.getElementById("busyTitle");
 const busySubtitle = document.getElementById("busySubtitle");
 
+const sessionName = document.getElementById("sessionName");
+const exportSessionBtn = document.getElementById("exportSessionBtn");
+
+const detailDrawer = document.getElementById("detailDrawer");
+const detailDrawerTitle = document.getElementById("detailDrawerTitle");
+const detailDrawerMeta = document.getElementById("detailDrawerMeta");
+const detailDrawerBody = document.getElementById("detailDrawerBody");
+const detailDrawerCloseBtn = document.getElementById("detailDrawerCloseBtn");
+
 const BLE_MEMORY_KEY = "rfv2_ble_memory_v1";
 const WIFI_MEMORY_KEY = "rfv2_wifi_memory_v1";
 const MEMORY_LIMIT = 200;
@@ -140,6 +149,7 @@ let lastBleStatus = null;
 let lastBleSummary = null;
 let lastWifiStatus = null;
 let lastWifiSummary = null;
+let selectedDetail = null;
 
 let bleMemory = loadMemoryStore(BLE_MEMORY_KEY);
 let wifiMemory = loadMemoryStore(WIFI_MEMORY_KEY);
@@ -180,7 +190,7 @@ function fmtShortTime(ts) {
   try {
     return new Date(ts).toLocaleTimeString();
   } catch {
-    return ts;
+    return String(ts);
   }
 }
 
@@ -255,11 +265,9 @@ function setWifiStatus(message, level = "good") {
 
 function updatePauseButton() {
   if (!pauseBtn) return;
-  if (currentScanner && currentScanner.mode === "paused") {
-    pauseBtn.textContent = "Resume scanner";
-  } else {
-    pauseBtn.textContent = "Pause scanner";
-  }
+  pauseBtn.textContent = currentScanner && currentScanner.mode === "paused"
+    ? "Resume scanner"
+    : "Pause scanner";
 }
 
 function updateModeUi() {
@@ -464,54 +472,6 @@ function shortUuid(uuid) {
   return value.length > 18 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
 }
 
-function renderBleEnrichmentHtml(entry) {
-  const manufacturerIds = Array.isArray(entry.manufacturer_ids) ? entry.manufacturer_ids : [];
-  const serviceUuids = Array.isArray(entry.service_uuids) ? entry.service_uuids : [];
-  const txPower = typeof entry.tx_power === "number" ? `${entry.tx_power} dBm` : "--";
-  const lastRssi = typeof entry.last_rssi === "number" ? entry.last_rssi : null;
-  const pathLoss = (typeof entry.tx_power === "number" && typeof lastRssi === "number")
-    ? `${Math.round(entry.tx_power - lastRssi)} dB`
-    : "--";
-
-  const manufacturerLabel = manufacturerIds.length
-    ? manufacturerIds.slice(0, 3).join(", ")
-    : "--";
-
-  const serviceLabel = serviceUuids.length
-    ? serviceUuids.slice(0, 2).map(shortUuid).join(", ")
-    : "--";
-
-  return `
-    <div class="ble-related">
-      <div>Co IDs: ${escapeHtml(manufacturerLabel)}</div>
-      <div class="ble-sub">UUIDs: ${escapeHtml(String(serviceUuids.length))}${serviceUuids.length ? ` • ${escapeHtml(serviceLabel)}` : ""}</div>
-      <div class="ble-sub">Tx: ${escapeHtml(txPower)} • Path loss: ${escapeHtml(pathLoss)}</div>
-      <div class="ble-sub">Probe: passive only</div>
-    </div>
-  `;
-}
-
-function renderWifiEnrichmentHtml(entry) {
-  const match = entry.match || {};
-  const passive = match.passive || {};
-
-  const vendor = match.vendorGuess || "--";
-  const oui = passive.oui || "--";
-  const band = passive.band || "--";
-  const channel = passive.channel || entry.channel || "--";
-  const security = passive.security || entry.security || "--";
-  const hiddenState = passive.hiddenSsid ? "Hidden SSID" : "Visible SSID";
-
-  return `
-    <div class="wifi-related">
-      <div>Vendor: ${escapeHtml(vendor)}</div>
-      <div class="wifi-sub">OUI: ${escapeHtml(oui)} • Band: ${escapeHtml(band)}</div>
-      <div class="wifi-sub">Ch: ${escapeHtml(String(channel))} • Sec: ${escapeHtml(String(security))}</div>
-      <div class="wifi-sub">${escapeHtml(hiddenState)} • Probe: passive only</div>
-    </div>
-  `;
-}
-
 function loadMemoryStore(key) {
   try {
     const raw = localStorage.getItem(key);
@@ -526,7 +486,7 @@ function loadMemoryStore(key) {
 function saveMemoryStore(key, store) {
   try {
     localStorage.setItem(key, JSON.stringify(store));
-  } catch (_) {}
+  } catch {}
 }
 
 function saveAllMemory() {
@@ -1335,6 +1295,295 @@ function scannerPayload() {
   };
 }
 
+function renderBleEnrichmentHtml(entry) {
+  const manufacturerIds = Array.isArray(entry.manufacturer_ids) ? entry.manufacturer_ids : [];
+  const serviceUuids = Array.isArray(entry.service_uuids) ? entry.service_uuids : [];
+  const txPower = typeof entry.tx_power === "number" ? `${entry.tx_power} dBm` : "--";
+  const lastRssi = typeof entry.last_rssi === "number" ? entry.last_rssi : null;
+  const pathLoss = (typeof entry.tx_power === "number" && typeof lastRssi === "number")
+    ? `${Math.round(entry.tx_power - lastRssi)} dB`
+    : "--";
+
+  const manufacturerLabel = manufacturerIds.length
+    ? manufacturerIds.slice(0, 3).join(", ")
+    : "--";
+
+  const serviceLabel = serviceUuids.length
+    ? serviceUuids.slice(0, 2).map(shortUuid).join(", ")
+    : "--";
+
+  return `
+    <div class="ble-related">
+      <div>Co IDs: ${escapeHtml(manufacturerLabel)}</div>
+      <div class="ble-sub">UUIDs: ${escapeHtml(String(serviceUuids.length))}${serviceUuids.length ? ` • ${escapeHtml(serviceLabel)}` : ""}</div>
+      <div class="ble-sub">Tx: ${escapeHtml(txPower)} • Path loss: ${escapeHtml(pathLoss)}</div>
+      <div class="ble-sub">Probe: passive only</div>
+    </div>
+  `;
+}
+
+function renderWifiEnrichmentHtml(entry) {
+  const match = entry.match || {};
+  const passive = match.passive || {};
+
+  const vendor = match.vendorGuess || "--";
+  const oui = passive.oui || "--";
+  const band = passive.band || "--";
+  const channel = passive.channel || entry.channel || "--";
+  const security = passive.security || entry.security || "--";
+  const hiddenState = passive.hiddenSsid ? "Hidden SSID" : "Visible SSID";
+
+  return `
+    <div class="wifi-related">
+      <div>Vendor: ${escapeHtml(vendor)}</div>
+      <div class="wifi-sub">OUI: ${escapeHtml(oui)} • Band: ${escapeHtml(band)}</div>
+      <div class="wifi-sub">Ch: ${escapeHtml(String(channel))} • Sec: ${escapeHtml(String(security))}</div>
+      <div class="wifi-sub">${escapeHtml(hiddenState)} • Probe: passive only</div>
+    </div>
+  `;
+}
+
+function jsonBlock(value) {
+  try {
+    return escapeHtml(JSON.stringify(value ?? {}, null, 2));
+  } catch {
+    return escapeHtml(String(value ?? ""));
+  }
+}
+
+function downloadJson(filename, data) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function fileTimestamp() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return [
+    d.getFullYear(),
+    pad(d.getMonth() + 1),
+    pad(d.getDate()),
+    "-",
+    pad(d.getHours()),
+    pad(d.getMinutes()),
+    pad(d.getSeconds())
+  ].join("");
+}
+
+function openDetailDrawer(title, meta, html, detailState = null) {
+  selectedDetail = detailState;
+  if (!detailDrawer || !detailDrawerTitle || !detailDrawerMeta || !detailDrawerBody) return;
+
+  detailDrawerTitle.textContent = title || "Detail";
+  detailDrawerMeta.textContent = meta || "";
+  detailDrawerBody.innerHTML = html || "";
+  detailDrawer.classList.remove("hidden");
+  detailDrawer.setAttribute("aria-hidden", "false");
+}
+
+function closeDetailDrawer() {
+  selectedDetail = null;
+  if (!detailDrawer) return;
+  detailDrawer.classList.add("hidden");
+  detailDrawer.setAttribute("aria-hidden", "true");
+}
+
+function buildBleDetailHtml(entry) {
+  const match = entry.match || {};
+  const manufacturerIds = Array.isArray(entry.manufacturer_ids) ? entry.manufacturer_ids : [];
+  const serviceUuids = Array.isArray(entry.service_uuids) ? entry.service_uuids : [];
+  const related = entry.related || null;
+
+  return `
+    <div class="detail-grid">
+      <div class="detail-block">
+        <h4>Identity</h4>
+        <div><strong>Name:</strong> ${escapeHtml(getBleDisplayLabel(entry))}</div>
+        <div><strong>Address:</strong> ${escapeHtml(entry.address || "--")}</div>
+        <div><strong>First seen:</strong> ${escapeHtml(String(entry.first_seen || "--"))}</div>
+        <div><strong>Last seen:</strong> ${escapeHtml(String(entry.last_seen || "--"))}</div>
+        <div><strong>Seen count:</strong> ${escapeHtml(String(entry.seen_count ?? 0))}</div>
+      </div>
+
+      <div class="detail-block">
+        <h4>Signal</h4>
+        <div><strong>Last RSSI:</strong> ${escapeHtml(typeof entry.last_rssi === "number" ? `${entry.last_rssi} dBm` : "--")}</div>
+        <div><strong>Max RSSI:</strong> ${escapeHtml(typeof entry.max_rssi === "number" ? `${entry.max_rssi} dBm` : "--")}</div>
+        <div><strong>Min RSSI:</strong> ${escapeHtml(typeof entry.min_rssi === "number" ? `${entry.min_rssi} dBm` : "--")}</div>
+        <div><strong>TX power:</strong> ${escapeHtml(typeof entry.tx_power === "number" ? `${entry.tx_power} dBm` : "--")}</div>
+        <div><strong>Distance bucket:</strong> ${escapeHtml(match.proximityLabel || "--")}</div>
+      </div>
+
+      <div class="detail-block">
+        <h4>Classification</h4>
+        <div><strong>Family:</strong> ${escapeHtml(match.family || "--")}</div>
+        <div><strong>Confidence:</strong> ${escapeHtml(match.confidence || "--")}</div>
+        <div><strong>Matched:</strong> ${escapeHtml(String(Boolean(match.matched)))}</div>
+        <div><strong>Reasons:</strong> ${escapeHtml(Array.isArray(match.reasons) ? match.reasons.join(" • ") : "--")}</div>
+        <div><strong>Firmware guess:</strong> ${escapeHtml(match.ravenFirmwareGuess || "--")}</div>
+      </div>
+
+      <div class="detail-block">
+        <h4>Enrichment</h4>
+        <div><strong>Company IDs:</strong> ${escapeHtml(manufacturerIds.length ? manufacturerIds.join(", ") : "--")}</div>
+        <div><strong>UUID count:</strong> ${escapeHtml(String(serviceUuids.length))}</div>
+        <div><strong>UUIDs:</strong> ${escapeHtml(serviceUuids.length ? serviceUuids.join(", ") : "--")}</div>
+      </div>
+
+      <div class="detail-block">
+        <h4>Related</h4>
+        <div><strong>Type:</strong> ${escapeHtml(related?.type || "--")}</div>
+        <div><strong>Label:</strong> ${escapeHtml(related?.label || "--")}</div>
+        <div><strong>Confidence:</strong> ${escapeHtml(related?.confidence || "--")}</div>
+        <div><strong>Reason:</strong> ${escapeHtml(related?.reason || "--")}</div>
+        <div><strong>Sublabel:</strong> ${escapeHtml(related?.sublabel || "--")}</div>
+      </div>
+
+      <div class="detail-block">
+        <h4>Raw match</h4>
+        <pre>${jsonBlock(match)}</pre>
+      </div>
+
+      <div class="detail-block">
+        <h4>Raw entry</h4>
+        <pre>${jsonBlock(entry)}</pre>
+      </div>
+    </div>
+  `;
+}
+
+function buildWifiDetailHtml(entry) {
+  const match = entry.match || {};
+  const passive = match.passive || {};
+  const related = entry.related || null;
+
+  return `
+    <div class="detail-grid">
+      <div class="detail-block">
+        <h4>Identity</h4>
+        <div><strong>SSID:</strong> ${escapeHtml(entry.ssid || "(hidden)")}</div>
+        <div><strong>BSSID:</strong> ${escapeHtml(entry.bssid || "--")}</div>
+        <div><strong>First seen:</strong> ${escapeHtml(String(entry.first_seen || "--"))}</div>
+        <div><strong>Last seen:</strong> ${escapeHtml(String(entry.last_seen || "--"))}</div>
+        <div><strong>Seen count:</strong> ${escapeHtml(String(entry.seen_count ?? 0))}</div>
+      </div>
+
+      <div class="detail-block">
+        <h4>Signal</h4>
+        <div><strong>Last signal:</strong> ${escapeHtml(typeof entry.last_signal === "number" ? `${entry.last_signal}%` : "--")}</div>
+        <div><strong>Max signal:</strong> ${escapeHtml(typeof entry.max_signal === "number" ? `${entry.max_signal}%` : "--")}</div>
+        <div><strong>Min signal:</strong> ${escapeHtml(typeof entry.min_signal === "number" ? `${entry.min_signal}%` : "--")}</div>
+        <div><strong>Distance bucket:</strong> ${escapeHtml(match.proximityLabel || "--")}</div>
+      </div>
+
+      <div class="detail-block">
+        <h4>Classification</h4>
+        <div><strong>Label:</strong> ${escapeHtml(match.label || "--")}</div>
+        <div><strong>Family:</strong> ${escapeHtml(match.family || "--")}</div>
+        <div><strong>Confidence:</strong> ${escapeHtml(match.confidence || "--")}</div>
+        <div><strong>Matched:</strong> ${escapeHtml(String(Boolean(match.matched)))}</div>
+        <div><strong>Reasons:</strong> ${escapeHtml(Array.isArray(match.reasons) ? match.reasons.join(" • ") : "--")}</div>
+        <div><strong>Exclusions:</strong> ${escapeHtml(Array.isArray(match.exclusions) ? match.exclusions.join(" • ") : "--")}</div>
+      </div>
+
+      <div class="detail-block">
+        <h4>Enrichment</h4>
+        <div><strong>Vendor:</strong> ${escapeHtml(match.vendorGuess || "--")}</div>
+        <div><strong>OUI:</strong> ${escapeHtml(passive.oui || "--")}</div>
+        <div><strong>Band:</strong> ${escapeHtml(passive.band || "--")}</div>
+        <div><strong>Channel:</strong> ${escapeHtml(String(passive.channel || entry.channel || "--"))}</div>
+        <div><strong>Security:</strong> ${escapeHtml(String(passive.security || entry.security || "--"))}</div>
+        <div><strong>Hidden:</strong> ${escapeHtml(String(Boolean(passive.hiddenSsid)))}</div>
+      </div>
+
+      <div class="detail-block">
+        <h4>Related</h4>
+        <div><strong>Type:</strong> ${escapeHtml(related?.type || "--")}</div>
+        <div><strong>Label:</strong> ${escapeHtml(related?.label || "--")}</div>
+        <div><strong>Confidence:</strong> ${escapeHtml(related?.confidence || "--")}</div>
+        <div><strong>Reason:</strong> ${escapeHtml(related?.reason || "--")}</div>
+        <div><strong>Sublabel:</strong> ${escapeHtml(related?.sublabel || "--")}</div>
+      </div>
+
+      <div class="detail-block">
+        <h4>Probe</h4>
+        <pre>${jsonBlock(match.probe || {})}</pre>
+      </div>
+
+      <div class="detail-block">
+        <h4>Raw match</h4>
+        <pre>${jsonBlock(match)}</pre>
+      </div>
+
+      <div class="detail-block">
+        <h4>Raw entry</h4>
+        <pre>${jsonBlock(entry)}</pre>
+      </div>
+    </div>
+  `;
+}
+
+function openBleDetail(key) {
+  const entry = bleMemory[key];
+  if (!entry) return;
+
+  const meta = `${entry.address || "--"} • ${entry.match?.family || "unknown"} • ${entry.match?.confidence || "none"}`;
+  openDetailDrawer(
+    getBleDisplayLabel(entry),
+    meta,
+    buildBleDetailHtml(entry),
+    { type: "ble", key }
+  );
+}
+
+function openWifiDetail(key) {
+  const entry = wifiMemory[key];
+  if (!entry) return;
+
+  const meta = `${entry.bssid || "--"} • ${entry.match?.label || "unknown"} • ${entry.match?.confidence || "none"}`;
+  openDetailDrawer(
+    getWifiDisplayLabel(entry),
+    meta,
+    buildWifiDetailHtml(entry),
+    { type: "wifi", key }
+  );
+}
+
+function exportSessionBundle() {
+  const name = String(sessionName?.value || "").trim();
+  const ts = fileTimestamp();
+  const safeName = name ? `${name.replace(/[^a-z0-9-_]+/gi, "-")}-` : "";
+  const filename = `rfv2-session-${safeName}${ts}.json`;
+
+  const bundle = {
+    exportedAt: new Date().toISOString(),
+    sessionName: name || null,
+    currentScanner,
+    currentSettings,
+    currentListenPipeline,
+    ble: {
+      status: lastBleStatus,
+      summary: lastBleSummary,
+      memory: bleMemory
+    },
+    wifi: {
+      status: lastWifiStatus,
+      summary: lastWifiSummary,
+      memory: wifiMemory
+    },
+    selectedDetail
+  };
+
+  downloadJson(filename, bundle);
+}
+
 function populateSettings(settings) {
   currentSettings = settings;
   if (relativeSquelch) relativeSquelch.value = settings.relativeSquelchDb;
@@ -1581,7 +1830,7 @@ function renderBleData(status, summaryData) {
       : `<span class="muted">—</span>`;
 
     return `
-      <tr class="${rowClasses.join(" ")}">
+      <tr class="${rowClasses.join(" ")}" data-ble-detail="${escapeHtml(entry.key)}">
         <td>
           <span class="ble-name">${escapeHtml(getBleDisplayLabel(entry))}</span>
           <span class="ble-sub">${escapeHtml(entry.address || "--")}</span>
@@ -1701,7 +1950,7 @@ function renderWifiData(status, summaryData) {
   if (!rememberedEntries.length) {
     wifiNetworksBody.innerHTML = `
       <tr>
-        <td colspan="8" class="muted">No Wi-Fi networks captured yet.</td>
+        <td colspan="9" class="muted">No Wi-Fi networks captured yet.</td>
       </tr>
     `;
     return;
@@ -1745,7 +1994,7 @@ function renderWifiData(status, summaryData) {
       : `<span class="muted">—</span>`;
 
     return `
-      <tr class="${rowClasses.join(" ")}">
+      <tr class="${rowClasses.join(" ")}" data-wifi-detail="${escapeHtml(entry.key)}">
         <td>
           <span class="wifi-name">${escapeHtml(getWifiDisplayLabel(entry))}</span>
           <span class="wifi-sub">${escapeHtml(entry.bssid || "--")}</span>
@@ -1757,6 +2006,7 @@ function renderWifiData(status, summaryData) {
           <div>${escapeHtml(`${entry.seen_count ?? 0}x`)}</div>
           <div class="wifi-sub">${escapeHtml(getSeenLabel(entry))}</div>
         </td>
+        <td>${renderWifiEnrichmentHtml(entry)}</td>
         <td>${relatedHtml}</td>
         <td class="wifi-why">${escapeHtml(why)}</td>
         <td>
@@ -1813,7 +2063,7 @@ function clearBleMemory() {
   if (lastBleStatus || lastBleSummary) {
     renderBleData(lastBleStatus || {}, lastBleSummary || { devices: [] });
   } else if (bleDevicesBody) {
-    bleDevicesBody.innerHTML = `<tr><td colspan="8" class="muted">No BLE devices captured yet.</td></tr>`;
+    bleDevicesBody.innerHTML = `<tr><td colspan="9" class="muted">No BLE devices captured yet.</td></tr>`;
   }
 }
 
@@ -1824,7 +2074,7 @@ function clearWifiMemory() {
   if (lastWifiStatus || lastWifiSummary) {
     renderWifiData(lastWifiStatus || {}, lastWifiSummary || { networks: [] });
   } else if (wifiNetworksBody) {
-    wifiNetworksBody.innerHTML = `<tr><td colspan="8" class="muted">No Wi-Fi networks captured yet.</td></tr>`;
+    wifiNetworksBody.innerHTML = `<tr><td colspan="9" class="muted">No Wi-Fi networks captured yet.</td></tr>`;
   }
 }
 
@@ -2211,6 +2461,7 @@ function updateTimer() {
 
 function updateDiagnosticsTimer() {
   if (diagnosticsTimer) clearInterval(diagnosticsTimer);
+  diagnosticsTimer = null;
   if (listenPipelineStatus) {
     diagnosticsTimer = setInterval(loadListenDiagnostics, 2000);
   }
@@ -2218,6 +2469,7 @@ function updateDiagnosticsTimer() {
 
 function updateBleTimer() {
   if (bleTimer) clearInterval(bleTimer);
+  bleTimer = null;
   if (bleStatusText) {
     bleTimer = setInterval(loadBleData, 2000);
   }
@@ -2225,6 +2477,7 @@ function updateBleTimer() {
 
 function updateWifiTimer() {
   if (wifiTimer) clearInterval(wifiTimer);
+  wifiTimer = null;
   if (wifiStatusText) {
     wifiTimer = setInterval(loadWifiData, 3000);
   }
@@ -2295,22 +2548,47 @@ if (bleClearMemoryBtn) bleClearMemoryBtn.addEventListener("click", clearBleMemor
 if (wifiStartBtn) wifiStartBtn.addEventListener("click", startWifiScanner);
 if (wifiStopBtn) wifiStopBtn.addEventListener("click", stopWifiScanner);
 if (wifiClearMemoryBtn) wifiClearMemoryBtn.addEventListener("click", clearWifiMemory);
+if (exportSessionBtn) exportSessionBtn.addEventListener("click", exportSessionBundle);
 
 if (bleDevicesBody) {
   bleDevicesBody.addEventListener("click", (event) => {
-    const btn = event.target.closest("[data-ble-lock]");
-    if (!btn) return;
-    toggleBleLock(btn.getAttribute("data-ble-lock"));
+    const lockBtn = event.target.closest("[data-ble-lock]");
+    if (lockBtn) {
+      toggleBleLock(lockBtn.getAttribute("data-ble-lock"));
+      return;
+    }
+
+    const row = event.target.closest("[data-ble-detail]");
+    if (row) {
+      openBleDetail(row.getAttribute("data-ble-detail"));
+    }
   });
 }
 
 if (wifiNetworksBody) {
   wifiNetworksBody.addEventListener("click", (event) => {
-    const btn = event.target.closest("[data-wifi-lock]");
-    if (!btn) return;
-    toggleWifiLock(btn.getAttribute("data-wifi-lock"));
+    const lockBtn = event.target.closest("[data-wifi-lock]");
+    if (lockBtn) {
+      toggleWifiLock(lockBtn.getAttribute("data-wifi-lock"));
+      return;
+    }
+
+    const row = event.target.closest("[data-wifi-detail]");
+    if (row) {
+      openWifiDetail(row.getAttribute("data-wifi-detail"));
+    }
   });
 }
+
+if (detailDrawerCloseBtn) {
+  detailDrawerCloseBtn.addEventListener("click", closeDetailDrawer);
+}
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeDetailDrawer();
+  }
+});
 
 if (proximityEnabled) {
   proximityEnabled.addEventListener("change", () => {

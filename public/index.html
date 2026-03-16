@@ -1,121 +1,188 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>RF Viewer V2</title>
   <style>
+    :root {
+      --bg: #0b0d10;
+      --panel: #12161c;
+      --panel-2: #171c24;
+      --line: rgba(255,255,255,0.1);
+      --text: #e8edf3;
+      --muted: #95a1b2;
+      --good: #6ee7b7;
+      --warn: #fbbf24;
+      --bad: #f87171;
+      --accent: #7fd;
+      --chip: rgba(255,255,255,0.06);
+      --shadow: 0 16px 40px rgba(0,0,0,0.35);
+      --radius: 16px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+
     body {
-      font-family: Arial, sans-serif;
-      margin: 24px;
-      background: #111;
-      color: #eee;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
     }
 
-    h1 { margin-top: 0; }
-    h3 { margin: 0; }
+    .page {
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
 
-    .row {
-      display: flex;
+    .topbar {
+      display: grid;
+      grid-template-columns: 1fr auto;
       gap: 16px;
-      align-items: center;
+      align-items: start;
+      margin-bottom: 16px;
+    }
+
+    .title h1 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.1;
+    }
+
+    .title p {
+      margin: 8px 0 0;
+      color: var(--muted);
+    }
+
+    .topbar-right {
+      display: flex;
       flex-wrap: wrap;
-    }
-
-    .card {
-      background: #1b1b1b;
-      border: 1px solid #333;
-      border-radius: 12px;
-      padding: 14px;
-      margin-top: 16px;
-    }
-
-    .card-header {
-      display: flex;
+      gap: 8px;
       align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      cursor: pointer;
-      user-select: none;
+      justify-content: flex-end;
     }
 
-    .card-header-right {
-      display: flex;
+    .badge,
+    .chip {
+      display: inline-flex;
       align-items: center;
-      gap: 10px;
+      gap: 5px;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: var(--chip);
+      border: 1px solid var(--line);
+      font-size: 11px;
+      line-height: 1;
+      white-space: nowrap;
     }
 
-    .collapse-btn {
-      background: #222;
-      color: #eee;
-      border: 1px solid #444;
-      padding: 6px 10px;
-      border-radius: 8px;
-      cursor: pointer;
-      min-width: 42px;
+    .badge.track { border-color: rgba(110,231,183,0.35); color: var(--good); }
+    .badge.survey { border-color: rgba(127,221,255,0.3); color: #a5f3fc; }
+    .badge.paused { border-color: rgba(251,191,36,0.35); color: var(--warn); }
+    .badge.listen { border-color: rgba(196,181,253,0.35); color: #c4b5fd; }
+
+    #bleStateBadge,
+    #bleUniqueBadge,
+    #bleActiveBadge,
+    #bleEventsBadge,
+    #bleMatchBadge,
+    #bleMatchBreakdownBadge,
+    #wifiStateBadge,
+    #wifiUniqueBadge,
+    #wifiActiveBadge,
+    #wifiEventsBadge,
+    #wifiMatchBadge,
+    #wifiMatchBreakdownBadge {
+      padding: 4px 8px;
+      font-size: 10.5px;
     }
 
-    .card-body {
-      margin-top: 14px;
-    }
-
-    .card.collapsed .card-body {
-      display: none;
-    }
-
-    select, button, input[type="number"], input[type="text"] {
-      background: #222;
-      color: #eee;
-      border: 1px solid #444;
-      padding: 8px 10px;
-      border-radius: 8px;
-      cursor: pointer;
-    }
-
-    button:disabled {
-      opacity: 0.55;
-      cursor: not-allowed;
-    }
-
-    input[type="checkbox"] {
-      transform: translateY(1px);
-    }
-
-    canvas {
-      width: 100%;
-      max-width: 100%;
-      background: #0d0d0d;
-      border-radius: 8px;
-      border: 1px solid #333;
-      cursor: crosshair;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 8px;
-      font-size: 14px;
-    }
-
-    td, th {
-      padding: 8px;
-      border-bottom: 1px solid #2a2a2a;
-      text-align: left;
-      vertical-align: top;
-    }
-
-    .muted { color: #aaa; }
+    .muted { color: var(--muted); }
+    .status-good { color: var(--good) !important; }
+    .status-warn { color: var(--warn) !important; }
+    .status-bad { color: var(--bad) !important; }
 
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 12px;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 16px;
+      align-items: stretch;
     }
 
-    .settings-grid {
+    .card {
+      grid-column: span 12;
+      background: linear-gradient(180deg, var(--panel), var(--panel-2));
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      height: 100%;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .card-body {
+      padding: 16px;
+      min-height: 0;
+      flex: 1 1 auto;
+    }
+
+    .card.w-3,
+    .card.w-4,
+    .card.w-5,
+    .card.w-6 {
+      grid-column: span 6;
+    }
+
+    .card.w-7,
+    .card.w-8,
+    .card.w-12 {
+      grid-column: span 12;
+    }
+
+    .card-header {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      background: rgba(255,255,255,0.02);
+      cursor: pointer;
+    }
+
+    .card-header h2,
+    .card-header h3 {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    .card-header-left {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .collapsed .card-body { display: none; }
+
+    .collapse-btn {
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.04);
+      color: var(--text);
+      border-radius: 10px;
+      width: 32px;
+      height: 32px;
+      cursor: pointer;
+      flex: 0 0 auto;
+    }
+
+    .control-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 12px;
-      align-items: end;
     }
 
     .field {
@@ -125,117 +192,193 @@
     }
 
     .field label {
-      font-size: 13px;
-      color: #aaa;
+      font-size: 12px;
+      color: var(--muted);
     }
 
-    .pill {
-      display: inline-block;
+    input[type="text"],
+    input[type="number"],
+    select,
+    textarea {
+      width: 100%;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      color: var(--text);
+      padding: 10px 12px;
+      font: inherit;
+    }
+
+    input[type="checkbox"] {
+      transform: translateY(1px);
+    }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 42px;
+      padding-top: 22px;
+    }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.05);
+      color: var(--text);
+      border-radius: 12px;
+      padding: 10px 12px;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    button:hover { background: rgba(255,255,255,0.08); }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      filter: saturate(0.6);
+    }
+
+    button:disabled:hover {
+      background: rgba(255,255,255,0.05);
+    }
+
+    button.locked {
+      border-color: rgba(251,191,36,0.45);
+      color: var(--warn);
+    }
+
+    .tiny-btn {
+      padding: 6px 10px;
+      font-size: 12px;
+      border-radius: 10px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px;
+    }
+
+    .summary-grid > div,
+    .stat-block {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+    }
+
+    canvas {
+      width: 100%;
+      max-width: 100%;
+      height: auto;
+      background: #0a0d11;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      display: block;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(0,0,0,0.18);
+      min-height: 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 900px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      vertical-align: top;
+      font-size: 13px;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: #12161c;
+      z-index: 1;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    tbody tr:hover {
+      background: rgba(255,255,255,0.03);
+    }
+
+    tbody tr[data-ble-detail],
+    tbody tr[data-wifi-detail] {
+      cursor: pointer;
+    }
+
+    .ble-name,
+    .wifi-name {
+      display: block;
+      font-weight: 600;
+    }
+
+    .ble-sub,
+    .wifi-sub {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 2px;
+      word-break: break-word;
+    }
+
+    .ble-related,
+    .wifi-related {
+      min-width: 180px;
+    }
+
+    .ble-match-pill,
+    .wifi-match-pill,
+    .ble-distance-pill,
+    .wifi-distance-pill {
+      display: inline-flex;
+      align-items: center;
       padding: 4px 8px;
       border-radius: 999px;
-      border: 1px solid #444;
-      background: #181818;
-      font-size: 12px;
-      color: #bbb;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.04);
       white-space: nowrap;
-    }
-
-    .overlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.45);
-      backdrop-filter: blur(2px);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 9999;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 180ms ease;
-    }
-
-    .overlay.active {
-      opacity: 1;
-      pointer-events: auto;
-    }
-
-    .overlay-card {
-      min-width: 240px;
-      max-width: 90vw;
-      background: rgba(24, 24, 24, 0.96);
-      border: 1px solid #3a3a3a;
-      border-radius: 14px;
-      padding: 18px 20px;
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
-    }
-
-    .spinner {
-      width: 20px;
-      height: 20px;
-      border-radius: 999px;
-      border: 2px solid #3e3e3e;
-      border-top-color: #eaeaea;
-      animation: spin 0.8s linear infinite;
-      flex: 0 0 auto;
-    }
-
-    .overlay-text {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    .overlay-title {
-      font-size: 15px;
-      font-weight: 600;
-      color: #f2f2f2;
-    }
-
-    .overlay-subtitle {
       font-size: 12px;
-      color: #aaa;
     }
 
-    .proximity-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 12px;
-      align-items: end;
-    }
+    .ble-match-high, .wifi-match-high { color: var(--good); border-color: rgba(110,231,183,0.3); }
+    .ble-match-medium, .wifi-match-medium { color: #93c5fd; border-color: rgba(147,197,253,0.3); }
+    .ble-match-low, .wifi-match-low { color: var(--warn); border-color: rgba(251,191,36,0.3); }
 
-    .meter-wrap {
-      margin-top: 8px;
-    }
+    .ble-distance-very_close,
+    .wifi-distance-very_close { color: var(--good); }
+    .ble-distance-close,
+    .wifi-distance-close { color: #93c5fd; }
+    .ble-distance-medium,
+    .wifi-distance-medium { color: var(--warn); }
+    .ble-distance-far,
+    .wifi-distance-far { color: #fca5a5; }
 
-    .meter-label-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 8px;
-      flex-wrap: wrap;
-    }
+    .ble-row-high { background: rgba(110,231,183,0.05); }
+    .ble-row-medium { background: rgba(147,197,253,0.04); }
+    .ble-row-low { background: rgba(251,191,36,0.04); }
 
-    .meter-track {
-      width: 100%;
-      height: 18px;
-      border-radius: 999px;
-      border: 1px solid #3a3a3a;
-      background: linear-gradient(90deg, #1d2a44 0%, #2d4b2d 50%, #5c2a2a 100%);
-      position: relative;
-      overflow: hidden;
-    }
-
-    .meter-fill {
-      height: 100%;
-      width: 0%;
-      border-radius: 999px;
-      background: rgba(255,255,255,0.25);
-      transition: width 160ms ease;
-    }
+    .memory-row-stale { opacity: 0.7; }
+    .memory-row-very-stale { opacity: 0.45; }
+    .memory-row-locked { outline: 1px solid rgba(251,191,36,0.35); outline-offset: -1px; }
 
     .big-readout {
       font-size: 28px;
@@ -243,705 +386,687 @@
       letter-spacing: 0.02em;
     }
 
-    .trend-hotter { color: #7fe08a; }
-    .trend-colder { color: #7fb2ff; }
-    .trend-steady { color: #ddd; }
+    .trend-hotter { color: var(--good); }
+    .trend-colder { color: #93c5fd; }
+    .trend-steady { color: var(--muted); }
 
-    .mode-track {
-      border-color: #4a6a4a !important;
-      box-shadow: 0 0 0 1px rgba(127, 224, 138, 0.12) inset;
+    .meter {
+      width: 100%;
+      height: 12px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid var(--line);
+      overflow: hidden;
     }
 
-    .mode-survey {
-      border-color: #333 !important;
-      box-shadow: none;
-    }
-
-    .mode-paused {
-      border-color: #7a5a2a !important;
-      box-shadow: 0 0 0 1px rgba(255, 210, 127, 0.12) inset;
-    }
-
-    .mode-listen {
-      border-color: #4c3f75 !important;
-      box-shadow: 0 0 0 1px rgba(181, 160, 255, 0.12) inset;
-    }
-
-    .status-good { color: #7fe08a; }
-    .status-warn { color: #ffd27f; }
-    .status-bad { color: #ff8a8a; }
-
-    #modeBadge.track {
-      background: #1f3322;
-      border-color: #3f6d47;
-      color: #9df0ab;
-    }
-
-    #modeBadge.survey {
-      background: #181818;
-      border-color: #444;
-      color: #bbb;
-    }
-
-    #modeBadge.paused {
-      background: #33281a;
-      border-color: #6f5630;
-      color: #ffd27f;
-    }
-
-    #modeBadge.listen {
-      background: #261f39;
-      border-color: #6d5a9b;
-      color: #d6c4ff;
-    }
-
-    .listen-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 12px;
-      align-items: end;
+    .meter-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #60a5fa, #34d399, #fbbf24);
+      transition: width 0.2s ease;
     }
 
     .log-box {
-      margin-top: 12px;
-      padding: 12px;
-      background: #101010;
-      border: 1px solid #2f2f2f;
-      border-radius: 10px;
+      min-height: 120px;
       max-height: 220px;
       overflow: auto;
       white-space: pre-wrap;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      word-break: break-word;
+      background: rgba(0,0,0,0.2);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
       font-size: 12px;
-      line-height: 1.35;
-      color: #ccc;
     }
 
-    .ble-metrics,
-    .wifi-metrics {
+    .session-tools {
       display: flex;
-      gap: 10px;
+      gap: 8px;
+      align-items: center;
       flex-wrap: wrap;
-      margin-top: 12px;
     }
 
-    .ble-table-wrap,
-    .wifi-table-wrap {
-      margin-top: 14px;
-      max-height: 380px;
+    .session-tools input {
+      min-width: 220px;
+    }
+
+    .detail-drawer.hidden { display: none; }
+
+    .detail-drawer {
+      position: fixed;
+      right: 16px;
+      top: 16px;
+      bottom: 16px;
+      width: min(520px, calc(100vw - 32px));
       overflow: auto;
-      border: 1px solid #2d2d2d;
-      border-radius: 10px;
+      background: #111;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 16px;
+      padding: 16px;
+      z-index: 9999;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
     }
 
-    .ble-table-wrap table,
-    .wifi-table-wrap table {
-      margin-top: 0;
+    .detail-drawer__header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
     }
 
-    .ble-name,
-    .wifi-name {
-      font-weight: 600;
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
     }
 
-    .ble-sub,
-    .wifi-sub {
-      display: block;
-      color: #9a9a9a;
+    .detail-block {
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      padding: 12px;
+      background: rgba(255,255,255,0.02);
+    }
+
+    .detail-block h4 {
+      margin: 0 0 8px 0;
+    }
+
+    .detail-block pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
       font-size: 12px;
-      margin-top: 3px;
-      word-break: break-all;
-    }
-
-    .ble-match-pill,
-    .wifi-match-pill {
-      display: inline-block;
-      padding: 4px 8px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 700;
-      border: 1px solid #444;
-      background: #1a1a1a;
-      color: #ddd;
-      white-space: nowrap;
-    }
-
-    .ble-match-high,
-    .wifi-match-high {
-      background: #33201f;
-      border-color: #8f4b45;
-      color: #ffb4ab;
-    }
-
-    .ble-match-medium,
-    .wifi-match-medium {
-      background: #332d1a;
-      border-color: #8a6a2f;
-      color: #ffd27f;
-    }
-
-    .ble-match-low,
-    .wifi-match-low {
-      background: #1f2433;
-      border-color: #4d628f;
-      color: #a8c4ff;
-    }
-
-    .ble-distance-pill,
-    .wifi-distance-pill {
-      display: inline-block;
-      padding: 4px 8px;
-      border-radius: 999px;
-      font-size: 12px;
-      border: 1px solid #444;
-      background: #171717;
-      color: #ddd;
-      white-space: nowrap;
-    }
-
-    .ble-distance-very_close,
-    .wifi-distance-very_close {
-      background: #3a1f1f;
-      border-color: #8e4a4a;
-      color: #ffb3b3;
-    }
-
-    .ble-distance-close,
-    .wifi-distance-close {
-      background: #332a1b;
-      border-color: #8d6a34;
-      color: #ffd58c;
-    }
-
-    .ble-distance-medium,
-    .wifi-distance-medium {
-      background: #1d2530;
-      border-color: #4d658d;
-      color: #afc7ff;
-    }
-
-    .ble-distance-far,
-    .wifi-distance-far {
-      background: #1a1a1a;
-      border-color: #444;
-      color: #bbb;
-    }
-
-    .ble-row-high td {
-      background: rgba(143, 75, 69, 0.10);
-    }
-
-    .ble-row-medium td {
-      background: rgba(138, 106, 47, 0.08);
-    }
-
-    .ble-row-low td {
-      background: rgba(77, 98, 143, 0.08);
-    }
-
-    .ble-why,
-    .wifi-why,
-    .ble-related,
-    .wifi-related {
-      font-size: 12px;
-      color: #a8a8a8;
-      max-width: 280px;
       line-height: 1.35;
     }
 
-    .memory-row-stale td {
-      opacity: 0.62;
+    .busy-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+      padding: 24px;
     }
 
-    .memory-row-very-stale td {
-      opacity: 0.38;
+    .busy-overlay.active {
+      display: flex;
     }
 
-    .memory-row-locked td {
-      box-shadow: inset 0 1px 0 rgba(255, 210, 127, 0.18), inset 0 -1px 0 rgba(255, 210, 127, 0.18);
+    .busy-box {
+      width: min(420px, 100%);
+      background: #11151b;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: var(--shadow);
     }
 
-    .tiny-btn {
-      padding: 5px 8px;
-      min-width: 58px;
+    .busy-box h3 {
+      margin: 0 0 6px;
+    }
+
+    .table-wrap:has(#bleDevicesBody),
+    .table-wrap:has(#wifiNetworksBody) {
+      max-height: clamp(260px, 38vh, 420px);
+      overflow: auto;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+    }
+
+    .table-wrap:has(#bleDevicesBody) th,
+    .table-wrap:has(#wifiNetworksBody) th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: #12161c;
+    }
+
+    .table-wrap:has(#bleDevicesBody) th,
+    .table-wrap:has(#bleDevicesBody) td,
+    .table-wrap:has(#wifiNetworksBody) th,
+    .table-wrap:has(#wifiNetworksBody) td {
+      padding: 8px 10px;
       font-size: 12px;
-      line-height: 1;
     }
 
-    .tiny-btn.locked {
-      border-color: #8d6a34;
-      color: #ffd58c;
-      background: #332a1b;
+    .table-wrap:has(#bleDevicesBody) table,
+    .table-wrap:has(#wifiNetworksBody) table {
+      min-width: 820px;
     }
 
-    .memory-note {
-      margin-top: 10px;
-      font-size: 12px;
-      color: #9a9a9a;
+    .table-wrap:has(#bleDevicesBody) .ble-sub,
+    .table-wrap:has(#wifiNetworksBody) .wifi-sub {
+      font-size: 11px;
+      line-height: 1.3;
     }
 
-    @keyframes spin {
-      to { transform: rotate(360deg); }
+    .table-wrap:has(#bleDevicesBody) .ble-match-pill,
+    .table-wrap:has(#bleDevicesBody) .ble-distance-pill,
+    .table-wrap:has(#wifiNetworksBody) .wifi-match-pill,
+    .table-wrap:has(#wifiNetworksBody) .wifi-distance-pill {
+      font-size: 11px;
+      padding: 3px 7px;
+    }
+
+    @media (max-width: 1024px) {
+      .card.w-3,
+      .card.w-4,
+      .card.w-5,
+      .card.w-6,
+      .card.w-7,
+      .card.w-8,
+      .card.w-12 {
+        grid-column: span 12;
+      }
+
+      .table-wrap:has(#bleDevicesBody),
+      .table-wrap:has(#wifiNetworksBody) {
+        max-height: clamp(240px, 34vh, 360px);
+      }
+
+      .table-wrap:has(#bleDevicesBody) th,
+      .table-wrap:has(#bleDevicesBody) td,
+      .table-wrap:has(#wifiNetworksBody) th,
+      .table-wrap:has(#wifiNetworksBody) td {
+        padding: 7px 9px;
+        font-size: 11.5px;
+      }
+
+      .table-wrap:has(#bleDevicesBody) table,
+      .table-wrap:has(#wifiNetworksBody) table {
+        min-width: 760px;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .page {
+        padding: 14px;
+      }
+
+      .topbar {
+        grid-template-columns: 1fr;
+      }
+
+      .topbar-right {
+        justify-content: flex-start;
+      }
+
+      .detail-drawer {
+        right: 8px;
+        left: 8px;
+        top: 8px;
+        bottom: 8px;
+        width: auto;
+      }
+
+      .table-wrap:has(#bleDevicesBody),
+      .table-wrap:has(#wifiNetworksBody) {
+        max-height: 300px;
+      }
+
+      .table-wrap:has(#bleDevicesBody) table,
+      .table-wrap:has(#wifiNetworksBody) table {
+        min-width: 700px;
+      }
     }
   </style>
 </head>
 <body>
-  <h1>RF Viewer V2</h1>
-
-  <div class="row">
-    <label for="fileSelect">Source:</label>
-    <select id="fileSelect"></select>
-    <label><input type="checkbox" id="liveMode" checked> Auto refresh</label>
-    <button id="recordBtn">Record</button>
-    <button id="stopBtn">Stop</button>
-    <button id="trackBtn">Track selected</button>
-    <button id="surveyBtn">Back to survey</button>
-    <button id="pauseBtn">Pause scanner</button>
-    <span class="muted" id="recordStatus"></span>
-    <span class="muted" id="status"></span>
-    <span class="muted" id="scannerStatus"></span>
-  </div>
-
-  <div class="row" id="modeBannerRow" style="margin-top: 12px;">
-    <span class="pill survey" id="modeBadge">SURVEY MODE</span>
-    <span class="pill" id="lockedFreqBadge">No lock</span>
-    <span class="muted status-good" id="uiMessage">Ready</span>
-  </div>
-
-  <div class="card mode-survey" data-card>
-    <div class="card-header" data-collapse-toggle>
-      <h3>Settings</h3>
-      <div class="card-header-right">
-        <span class="muted">Filter and viewer config</span>
-        <button class="collapse-btn" type="button" aria-label="Toggle section">−</button>
-      </div>
-    </div>
-    <div class="card-body">
-      <div class="settings-grid">
-        <div class="field">
-          <label for="relativeSquelch">Relative squelch (dB over median)</label>
-          <input id="relativeSquelch" type="number" step="1" min="0" max="50" />
-        </div>
-
-        <div class="field">
-          <label for="absoluteFloor">Absolute floor (dB)</label>
-          <input id="absoluteFloor" type="number" step="1" min="-120" max="20" />
-        </div>
-
-        <div class="field">
-          <label for="minRepeats">Minimum repeats</label>
-          <select id="minRepeats">
-            <option value="1">1</option>
-            <option value="2">2</option>
-            <option value="3">3</option>
-            <option value="4">4</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="clusterWidthHz">Cluster width</label>
-          <select id="clusterWidthHz">
-            <option value="25000">25 kHz</option>
-            <option value="50000">50 kHz</option>
-            <option value="100000">100 kHz</option>
-            <option value="200000">200 kHz</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label>&nbsp;</label>
-          <button id="applySettingsBtn">Apply</button>
-        </div>
-
-        <div class="field">
-          <label>&nbsp;</label>
-          <button id="saveSettingsBtn">Save defaults</button>
-        </div>
-      </div>
-
-      <div class="row" style="margin-top: 12px;">
-        <span class="pill" id="viewerOrigin"></span>
-        <span class="muted" id="settingsStatus"></span>
-      </div>
+  <div id="busyOverlay" class="busy-overlay" aria-hidden="true">
+    <div class="busy-box">
+      <h3 id="busyTitle">Working</h3>
+      <div id="busySubtitle" class="muted">Applying changes</div>
     </div>
   </div>
 
-  <div class="card mode-survey" data-card>
-    <div class="card-header" data-collapse-toggle>
-      <h3>Scanner</h3>
-      <div class="card-header-right">
-        <span class="muted">Survey and track range control</span>
-        <button class="collapse-btn" type="button" aria-label="Toggle section">−</button>
+  <div class="page">
+    <div class="topbar">
+      <div class="title">
+        <h1>RF Viewer V2</h1>
+        <p>RF survey, track, listen, BLE, and Wi-Fi field viewer</p>
+      </div>
+      <div class="topbar-right">
+        <span id="modeBadge" class="badge survey">SURVEY MODE</span>
+        <span id="lockedFreqBadge" class="chip">No lock</span>
+        <span id="uiMessage" class="chip status-good">Ready</span>
+        <span id="viewerOrigin" class="chip muted">Viewer: --</span>
       </div>
     </div>
-    <div class="card-body">
-      <div class="settings-grid">
-        <div class="field">
-          <label for="surveyStartMHz" title="Start frequency in MHz, like 402.000">Survey start (MHz)</label>
-          <input id="surveyStartMHz" type="text" inputmode="decimal" title="Start frequency in MHz, like 402.000" />
-        </div>
 
-        <div class="field">
-          <label for="surveyStopMHz" title="Stop frequency in MHz, like 528.000">Survey stop (MHz)</label>
-          <input id="surveyStopMHz" type="text" inputmode="decimal" title="Stop frequency in MHz, like 528.000" />
-        </div>
-
-        <div class="field">
-          <label for="surveyBinKhz" title="Bin size in kHz, like 50">Survey bin (kHz)</label>
-          <input id="surveyBinKhz" type="number" step="1" min="1" title="Bin size in kHz, like 50" />
-        </div>
-
-        <div class="field">
-          <label for="surveyInterval" title="rtl_power reporting interval, like 2s">Survey interval</label>
-          <input id="surveyInterval" type="text" title="rtl_power reporting interval, like 2s" />
-        </div>
-
-        <div class="field">
-          <label for="surveyWindow" title="How long each survey pass runs, like 10s">Survey window</label>
-          <input id="surveyWindow" type="text" title="How long each survey pass runs, like 10s" />
-        </div>
-
-        <div class="field">
-          <label for="trackSpanKhz" title="Track span width in kHz, like 200">Track span (kHz)</label>
-          <input id="trackSpanKhz" type="number" step="1" min="1" title="Track span width in kHz, like 200" />
-        </div>
-
-        <div class="field">
-          <label for="trackBinKhz" title="Track bin size in kHz, like 10">Track bin (kHz)</label>
-          <input id="trackBinKhz" type="number" step="1" min="1" title="Track bin size in kHz, like 10" />
-        </div>
-
-        <div class="field">
-          <label for="trackInterval">Track interval</label>
-          <input id="trackInterval" type="text" />
-        </div>
-
-        <div class="field">
-          <label for="trackWindow">Track window</label>
-          <input id="trackWindow" type="text" />
-        </div>
-
-        <div class="field">
-          <label>&nbsp;</label>
-          <button id="runScannerBtn">Run scanner config</button>
-        </div>
-
-        <div class="field">
-          <label>&nbsp;</label>
-          <button id="saveScannerBtn">Save scanner config</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="card mode-survey" data-card>
-    <div class="card-header" data-collapse-toggle>
-      <h3>Listen</h3>
-      <div class="card-header-right">
-        <span class="muted">Tune one frequency and stream audio</span>
-        <button class="collapse-btn" type="button" aria-label="Toggle section">−</button>
-      </div>
-    </div>
-    <div class="card-body">
-      <div class="listen-grid">
-        <div class="field">
-          <label for="listenFrequency">Frequency</label>
-          <input id="listenFrequency" type="text" placeholder="99.5M or 162.55M" />
-        </div>
-
-        <div class="field">
-          <label for="listenModulation">Modulation</label>
-          <select id="listenModulation">
-            <option value="fm">FM</option>
-            <option value="wbfm">WBFM</option>
-            <option value="am">AM</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="listenGain">Gain</label>
-          <input id="listenGain" type="number" step="1" min="0" max="60" />
-        </div>
-
-        <div class="field">
-          <label for="listenSquelch">Squelch</label>
-          <input id="listenSquelch" type="number" step="1" min="0" max="100" />
-        </div>
-
-        <div class="field">
-          <label>&nbsp;</label>
-          <button id="listenStartBtn">Start listen</button>
-        </div>
-
-        <div class="field">
-          <label>&nbsp;</label>
-          <button id="listenStopBtn">Stop listen</button>
-        </div>
-
-        <div class="field">
-          <label>&nbsp;</label>
-          <button id="playBrowserAudioBtn">Play in browser</button>
-        </div>
-
-        <div class="field">
-          <label>&nbsp;</label>
-          <button id="stopBrowserAudioBtn">Stop browser audio</button>
-        </div>
-      </div>
-
-      <div class="row" style="margin-top: 12px;">
-        <span class="pill" id="listenPipelineStateBadge">State: --</span>
-        <span class="pill" id="listenClientCountBadge">Clients: --</span>
-        <span class="pill" id="listenAudioMetaBadge">Audio: --</span>
-        <span class="muted" id="listenStatus">Not listening</span>
-      </div>
-
-      <div class="row" style="margin-top: 10px;">
-        <span class="muted" id="listenPipelineStatus">Pipeline idle</span>
-      </div>
-
-      <div class="row" style="margin-top: 10px;">
-        <span class="muted" id="listenPipelineMeta">No pipeline info yet</span>
-      </div>
-
-      <audio id="listenBrowserAudio" controls style="width: 100%; margin-top: 14px;"></audio>
-
-      <div class="log-box" id="listenLog">No log entries yet.</div>
-    </div>
-  </div>
-
-  <div class="card mode-survey" data-card>
-    <div class="card-header" data-collapse-toggle>
-      <h3>BLE</h3>
-      <div class="card-header-right">
-        <span class="muted">Nearby BLE advertisers and recent signatures</span>
-        <button class="collapse-btn" type="button" aria-label="Toggle section">−</button>
-      </div>
-    </div>
-    <div class="card-body">
-      <div class="row">
-        <button id="bleStartBtn">Start BLE</button>
-        <button id="bleStopBtn">Stop BLE</button>
-        <button id="bleClearMemoryBtn">Clear BLE Memory</button>
-        <span class="muted" id="bleStatusText">Loading BLE status...</span>
-      </div>
-
-      <div class="ble-metrics">
-        <span class="pill" id="bleStateBadge">BLE: --</span>
-        <span class="pill" id="bleUniqueBadge">Unique: --</span>
-        <span class="pill" id="bleActiveBadge">Active: --</span>
-        <span class="pill" id="bleEventsBadge">Events: --</span>
-        <span class="pill" id="bleMatchBadge">Matches: --</span>
-        <span class="pill" id="bleMatchBreakdownBadge">H/M/L/B/P/R: --</span>
-        <span class="pill" id="bleStrongestBadge">Strongest: --</span>
-        <span class="pill" id="bleRememberedBadge">Remembered: --</span>
-      </div>
-
-      <div class="memory-note">
-        <span id="bleMemoryInfo">BLE memory is stored locally in this browser. Stale rows stay visible and dim over time.</span>
-      </div>
-
-      <div class="ble-table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Device</th>
-              <th>Match</th>
-              <th>RSSI</th>
-              <th>Distance</th>
-              <th>Seen</th>
-              <th>Enrichment</th>
-              <th>Related</th>
-              <th>Why</th>
-              <th>Lock</th>
-            </tr>
-          </thead>
-          <tbody id="bleDevicesBody"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
-  <div class="card mode-survey" data-card>
-    <div class="card-header" data-collapse-toggle>
-      <h3>Wi-Fi</h3>
-      <div class="card-header-right">
-        <span class="muted">Nearby APs and Flock-style SSID matches</span>
-        <button class="collapse-btn" type="button" aria-label="Toggle section">−</button>
-      </div>
-    </div>
-    <div class="card-body">
-      <div class="row">
-        <button id="wifiStartBtn">Start Wi-Fi</button>
-        <button id="wifiStopBtn">Stop Wi-Fi</button>
-        <button id="wifiClearMemoryBtn">Clear Wi-Fi Memory</button>
-        <span class="muted" id="wifiStatusText">Loading Wi-Fi status...</span>
-      </div>
-
-      <div class="wifi-metrics">
-        <span class="pill" id="wifiStateBadge">Wi-Fi: --</span>
-        <span class="pill" id="wifiUniqueBadge">Unique: --</span>
-        <span class="pill" id="wifiActiveBadge">Active: --</span>
-        <span class="pill" id="wifiEventsBadge">Events: --</span>
-        <span class="pill" id="wifiMatchBadge">Matches: --</span>
-        <span class="pill" id="wifiMatchBreakdownBadge">H/M/L: --</span>
-        <span class="pill" id="wifiStrongestBadge">Strongest: --</span>
-        <span class="pill" id="wifiRememberedBadge">Remembered: --</span>
-      </div>
-
-      <div class="memory-note">
-        <span id="wifiMemoryInfo">Wi-Fi memory is stored locally in this browser. Hidden or stale networks stay visible until cleared.</span>
-      </div>
-
-      <div class="wifi-table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Network</th>
-              <th>Match</th>
-              <th>Signal</th>
-              <th>Distance</th>
-              <th>Seen</th>
-              <th>Enrichment</th>
-              <th>Related</th>
-              <th>Why</th>
-              <th>Lock</th>
-            </tr>
-          </thead>
-          <tbody id="wifiNetworksBody"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
-  <div class="card mode-survey" data-card>
-    <div class="card-header" data-collapse-toggle>
-      <h3>Proximity</h3>
-      <div class="card-header-right">
-        <span class="muted">Track-mode hot/cold feedback</span>
-        <button class="collapse-btn" type="button" aria-label="Toggle section">−</button>
-      </div>
-    </div>
-    <div class="card-body">
-      <div class="proximity-grid">
-        <div class="field">
-          <label><input type="checkbox" id="proximityEnabled"> Proximity mode</label>
-        </div>
-
-        <div class="field">
-          <label><input type="checkbox" id="audioEnabled"> Audio beeps</label>
-        </div>
-
-        <div class="field">
-          <label for="smoothingCount">Smoothing samples</label>
-          <select id="smoothingCount">
-            <option value="3">3</option>
-            <option value="5" selected>5</option>
-            <option value="7">7</option>
-            <option value="9">9</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="historyCount">History window</label>
-          <select id="historyCount">
-            <option value="10">10</option>
-            <option value="20" selected>20</option>
-            <option value="30">30</option>
-            <option value="50">50</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="meter-wrap">
-        <div class="meter-label-row">
-          <div>
-            <div class="muted">Target</div>
-            <div id="proximityTarget">No target selected</div>
+    <div class="grid">
+      <section class="card w-12" data-card>
+        <div class="card-header" data-collapse-toggle>
+          <div class="card-header-left">
+            <h2>Session Tools</h2>
+            <div class="muted">Export current browser-side memory and runtime state</div>
           </div>
-          <div>
-            <div class="muted">Trend</div>
-            <div id="proximityTrend" class="big-readout trend-steady">STEADY</div>
-          </div>
-          <div>
-            <div class="muted">Strength</div>
-            <div id="proximityStrength" class="big-readout">0%</div>
+          <button class="collapse-btn" type="button">−</button>
+        </div>
+        <div class="card-body">
+          <div class="session-tools">
+            <input id="sessionName" type="text" placeholder="Session name (optional)">
+            <button id="exportSessionBtn" type="button">Export session bundle</button>
           </div>
         </div>
+      </section>
 
-        <div class="meter-track">
-          <div id="proximityMeterFill" class="meter-fill"></div>
+      <section class="card w-4" data-card>
+        <div class="card-header" data-collapse-toggle>
+          <div class="card-header-left">
+            <h3>Data Source & Recording</h3>
+            <div class="muted">Select live or saved scan data</div>
+          </div>
+          <button class="collapse-btn" type="button">−</button>
         </div>
-
-        <div class="row" style="margin-top: 10px;">
-          <span class="pill" id="proximityCurrentDb">Current: -- dB</span>
-          <span class="pill" id="proximityPeakDb">Peak: -- dB</span>
-          <span class="pill" id="proximityModeState">Idle</span>
+        <div class="card-body">
+          <div class="control-grid">
+            <div class="field">
+              <label for="fileSelect">Source</label>
+              <select id="fileSelect">
+                <option value="live">live</option>
+              </select>
+            </div>
+            <div class="field checkbox-row">
+              <input id="liveMode" type="checkbox" checked>
+              <label for="liveMode">Auto refresh live source</label>
+            </div>
+          </div>
+          <div class="btn-row">
+            <button id="recordBtn" type="button">Start recording</button>
+            <button id="stopBtn" type="button">Stop recording</button>
+          </div>
+          <div id="recordStatus" class="muted" style="margin-top:10px;">Not recording</div>
         </div>
-      </div>
+      </section>
+
+      <section class="card w-4" data-card>
+        <div class="card-header" data-collapse-toggle>
+          <div class="card-header-left">
+            <h3>Viewer Settings</h3>
+            <div class="muted">Thresholds and clustering</div>
+          </div>
+          <button class="collapse-btn" type="button">−</button>
+        </div>
+        <div class="card-body">
+          <div class="control-grid">
+            <div class="field">
+              <label for="relativeSquelch">Relative squelch dB</label>
+              <input id="relativeSquelch" type="number" step="0.1">
+            </div>
+            <div class="field">
+              <label for="absoluteFloor">Absolute floor dB</label>
+              <input id="absoluteFloor" type="number" step="0.1">
+            </div>
+            <div class="field">
+              <label for="minRepeats">Min repeats</label>
+              <input id="minRepeats" type="number" step="1">
+            </div>
+            <div class="field">
+              <label for="clusterWidthHz">Cluster width Hz</label>
+              <input id="clusterWidthHz" type="number" step="1">
+            </div>
+          </div>
+          <div class="btn-row">
+            <button id="applySettingsBtn" type="button">Apply viewer settings</button>
+            <button id="saveSettingsBtn" type="button">Save defaults</button>
+          </div>
+          <div id="settingsStatus" class="muted" style="margin-top:10px;">Waiting</div>
+        </div>
+      </section>
+
+      <section class="card w-4" data-card>
+        <div class="card-header" data-collapse-toggle>
+          <div class="card-header-left">
+            <h3>Scanner Status</h3>
+            <div class="muted">RF scanner mode and state</div>
+          </div>
+          <button class="collapse-btn" type="button">−</button>
+        </div>
+        <div class="card-body">
+          <div id="scannerStatus" class="muted">Loading scanner state...</div>
+          <div id="clickedFreq" class="muted" style="margin-top:10px;">Selected: --</div>
+          <div id="status" class="muted" style="margin-top:10px;">Waiting for data...</div>
+        </div>
+      </section>
+
+      <section class="card w-6" data-card>
+        <div class="card-header" data-collapse-toggle>
+          <div class="card-header-left">
+            <h3>RF Scanner Controls</h3>
+            <div class="muted">Survey / track / pause config</div>
+          </div>
+          <button class="collapse-btn" type="button">−</button>
+        </div>
+        <div class="card-body">
+          <div class="control-grid">
+            <div class="field">
+              <label for="surveyStartMHz">Survey start MHz</label>
+              <input id="surveyStartMHz" type="text" placeholder="902.000">
+            </div>
+            <div class="field">
+              <label for="surveyStopMHz">Survey stop MHz</label>
+              <input id="surveyStopMHz" type="text" placeholder="928.000">
+            </div>
+            <div class="field">
+              <label for="surveyBinKhz">Survey bin kHz</label>
+              <input id="surveyBinKhz" type="number" step="1" placeholder="50">
+            </div>
+            <div class="field">
+              <label for="surveyInterval">Survey interval</label>
+              <input id="surveyInterval" type="text" placeholder="2s">
+            </div>
+            <div class="field">
+              <label for="surveyWindow">Survey window</label>
+              <input id="surveyWindow" type="text" placeholder="10s">
+            </div>
+            <div class="field">
+              <label for="trackSpanKhz">Track span kHz</label>
+              <input id="trackSpanKhz" type="number" step="1" placeholder="200">
+            </div>
+            <div class="field">
+              <label for="trackBinKhz">Track bin kHz</label>
+              <input id="trackBinKhz" type="number" step="1" placeholder="10">
+            </div>
+            <div class="field">
+              <label for="trackInterval">Track interval</label>
+              <input id="trackInterval" type="text" placeholder="1s">
+            </div>
+            <div class="field">
+              <label for="trackWindow">Track window</label>
+              <input id="trackWindow" type="text" placeholder="4s">
+            </div>
+          </div>
+          <div class="btn-row">
+            <button id="runScannerBtn" type="button">Run scanner config</button>
+            <button id="saveScannerBtn" type="button">Save scanner config</button>
+            <button id="trackBtn" type="button">Track selected freq</button>
+            <button id="surveyBtn" type="button">Survey mode</button>
+            <button id="pauseBtn" type="button">Pause scanner</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card w-6" data-card>
+        <div class="card-header" data-collapse-toggle>
+          <div class="card-header-left">
+            <h3>Listen Mode</h3>
+            <div class="muted">Tune one frequency and stream audio</div>
+          </div>
+          <button class="collapse-btn" type="button">−</button>
+        </div>
+        <div class="card-body">
+          <div class="control-grid">
+            <div class="field">
+              <label for="listenFrequency">Frequency</label>
+              <input id="listenFrequency" type="text" placeholder="93.3M">
+            </div>
+            <div class="field">
+              <label for="listenModulation">Modulation</label>
+              <select id="listenModulation">
+                <option value="fm">fm</option>
+                <option value="wbfm">wbfm</option>
+                <option value="am">am</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="listenGain">Gain</label>
+              <input id="listenGain" type="number" step="1" value="30">
+            </div>
+            <div class="field">
+              <label for="listenSquelch">Squelch</label>
+              <input id="listenSquelch" type="number" step="1" value="0">
+            </div>
+          </div>
+          <div class="btn-row">
+            <button id="listenStartBtn" type="button">Start listen mode</button>
+            <button id="listenStopBtn" type="button">Stop listen mode</button>
+          </div>
+          <div id="listenStatus" class="muted" style="margin-top:10px;">Not listening</div>
+
+          <hr style="margin:16px 0;border:none;border-top:1px solid rgba(255,255,255,0.08)">
+
+          <div class="btn-row">
+            <button id="playBrowserAudioBtn" type="button">Play in browser</button>
+            <button id="stopBrowserAudioBtn" type="button">Stop browser audio</button>
+          </div>
+          <audio id="listenBrowserAudio" preload="none"></audio>
+
+          <div class="btn-row" style="margin-top:12px;">
+            <span id="listenPipelineStateBadge" class="chip">State: idle</span>
+            <span id="listenClientCountBadge" class="chip">Clients: 0</span>
+            <span id="listenAudioMetaBadge" class="chip">Audio: --</span>
+          </div>
+
+          <div id="listenPipelineStatus" class="muted" style="margin-top:10px;">Pipeline idle</div>
+          <div id="listenPipelineMeta" class="muted" style="margin-top:6px;">No pipeline info yet</div>
+
+          <div style="margin-top:12px;">
+            <div class="muted" style="margin-bottom:6px;">Listen log</div>
+            <div id="listenLog" class="log-box">No log entries yet.</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card w-4" data-card>
+        <div class="card-header" data-collapse-toggle>
+          <div class="card-header-left">
+            <h3>Proximity Mode</h3>
+            <div class="muted">Track-mode hot/cold helper</div>
+          </div>
+          <button class="collapse-btn" type="button">−</button>
+        </div>
+        <div class="card-body">
+          <div class="control-grid">
+            <div class="field checkbox-row">
+              <input id="proximityEnabled" type="checkbox">
+              <label for="proximityEnabled">Enable proximity mode</label>
+            </div>
+            <div class="field checkbox-row">
+              <input id="audioEnabled" type="checkbox">
+              <label for="audioEnabled">Enable UI audio cues</label>
+            </div>
+            <div class="field">
+              <label for="smoothingCount">Smoothing count</label>
+              <input id="smoothingCount" type="number" step="1" value="5">
+            </div>
+            <div class="field">
+              <label for="historyCount">History count</label>
+              <input id="historyCount" type="number" step="1" value="20">
+            </div>
+          </div>
+
+          <div class="summary-grid" style="margin-top:14px;">
+            <div>
+              <div class="muted">Target</div>
+              <div id="proximityTarget">No target selected</div>
+            </div>
+            <div>
+              <div class="muted">Trend</div>
+              <div id="proximityTrend" class="big-readout trend-steady">STEADY</div>
+            </div>
+            <div>
+              <div class="muted">Strength</div>
+              <div id="proximityStrength">0%</div>
+            </div>
+          </div>
+
+          <div class="meter" style="margin-top:14px;">
+            <div id="proximityMeterFill" class="meter-fill"></div>
+          </div>
+
+          <div class="summary-grid" style="margin-top:14px;">
+            <div id="proximityCurrentDb">Current: -- dB</div>
+            <div id="proximityPeakDb">Peak: -- dB</div>
+            <div id="proximityModeState">Idle</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card w-8" data-card>
+        <div class="card-header" data-collapse-toggle>
+          <div class="card-header-left">
+            <h3>Spectrum & Summary</h3>
+            <div class="muted">Click the spectrum to select a frequency</div>
+          </div>
+          <button class="collapse-btn" type="button">−</button>
+        </div>
+        <div class="card-body">
+          <div id="summary" class="summary-grid">
+            <div>No data</div>
+          </div>
+          <div style="margin-top:14px;">
+            <canvas id="chart" width="1100" height="320"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <section class="card w-12" data-card>
+        <div class="card-header" data-collapse-toggle>
+          <div class="card-header-left">
+            <h3>Events</h3>
+            <div class="muted">Latest clustered RF events</div>
+          </div>
+          <button class="collapse-btn" type="button">−</button>
+        </div>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Peak</th>
+                  <th>Peak dB</th>
+                  <th>Median dB</th>
+                  <th>Range</th>
+                </tr>
+              </thead>
+              <tbody id="eventsBody">
+                <tr><td colspan="5" class="muted">No events yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="card w-6" data-card>
+        <div class="card-header" data-collapse-toggle>
+          <div class="card-header-left">
+            <h3>BLE Scanner</h3>
+            <div class="muted">Passive BLE matches and remembered devices</div>
+          </div>
+          <button class="collapse-btn" type="button">−</button>
+        </div>
+        <div class="card-body">
+          <div class="btn-row">
+            <button id="bleStartBtn" type="button">Start BLE</button>
+            <button id="bleStopBtn" type="button">Stop BLE</button>
+            <button id="bleClearMemoryBtn" type="button">Clear BLE Memory</button>
+          </div>
+
+          <div class="btn-row" style="margin-top:12px;">
+            <span id="bleStateBadge" class="chip">BLE: --</span>
+            <span id="bleUniqueBadge" class="chip">Unique: 0</span>
+            <span id="bleActiveBadge" class="chip">Active: 0</span>
+            <span id="bleEventsBadge" class="chip">Events: 0</span>
+            <span id="bleMatchBadge" class="chip">Matches: 0</span>
+            <span id="bleMatchBreakdownBadge" class="chip">H/M/L/B/P/R: 0/0/0/0/0/0</span>
+          </div>
+
+          <div id="bleStrongestBadge" class="muted" style="margin-top:10px;">Strongest: --</div>
+          <div id="bleRememberedBadge" class="muted" style="margin-top:6px;">Remembered: 0</div>
+          <div id="bleMemoryInfo" class="muted" style="margin-top:6px;">BLE memory stored locally in this browser</div>
+          <div id="bleStatusText" class="muted" style="margin-top:10px;">Loading BLE status...</div>
+
+          <div class="table-wrap" style="margin-top:14px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Device</th>
+                  <th>Match</th>
+                  <th>RSSI</th>
+                  <th>Distance</th>
+                  <th>Seen</th>
+                  <th>Enrichment</th>
+                  <th>Related</th>
+                  <th>Why</th>
+                  <th>Lock</th>
+                </tr>
+              </thead>
+              <tbody id="bleDevicesBody">
+                <tr><td colspan="9" class="muted">Loading BLE status...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="card w-6" data-card>
+        <div class="card-header" data-collapse-toggle>
+          <div class="card-header-left">
+            <h3>Wi-Fi Scanner</h3>
+            <div class="muted">Passive Wi-Fi matches and remembered networks</div>
+          </div>
+          <button class="collapse-btn" type="button">−</button>
+        </div>
+        <div class="card-body">
+          <div class="btn-row">
+            <button id="wifiStartBtn" type="button">Start Wi-Fi</button>
+            <button id="wifiStopBtn" type="button">Stop Wi-Fi</button>
+            <button id="wifiClearMemoryBtn" type="button">Clear Wi-Fi Memory</button>
+          </div>
+
+          <div class="btn-row" style="margin-top:12px;">
+            <span id="wifiStateBadge" class="chip">Wi-Fi: --</span>
+            <span id="wifiUniqueBadge" class="chip">Unique: 0</span>
+            <span id="wifiActiveBadge" class="chip">Active: 0</span>
+            <span id="wifiEventsBadge" class="chip">Events: 0</span>
+            <span id="wifiMatchBadge" class="chip">Matches: 0</span>
+            <span id="wifiMatchBreakdownBadge" class="chip">H/M/L: 0/0/0</span>
+          </div>
+
+          <div id="wifiStrongestBadge" class="muted" style="margin-top:10px;">Strongest: --</div>
+          <div id="wifiRememberedBadge" class="muted" style="margin-top:6px;">Remembered: 0</div>
+          <div id="wifiMemoryInfo" class="muted" style="margin-top:6px;">Wi-Fi memory stored locally in this browser</div>
+          <div id="wifiStatusText" class="muted" style="margin-top:10px;">Loading Wi-Fi status...</div>
+
+          <div class="table-wrap" style="margin-top:14px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Network</th>
+                  <th>Match</th>
+                  <th>Signal</th>
+                  <th>Distance</th>
+                  <th>Seen</th>
+                  <th>Enrichment</th>
+                  <th>Related</th>
+                  <th>Why</th>
+                  <th>Lock</th>
+                </tr>
+              </thead>
+              <tbody id="wifiNetworksBody">
+                <tr><td colspan="9" class="muted">Loading Wi-Fi status...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
     </div>
   </div>
 
-  <div class="card mode-survey" data-card>
-    <div class="card-header" data-collapse-toggle>
-      <h3>Summary</h3>
-      <div class="card-header-right">
-        <span class="muted">Current dataset overview</span>
-        <button class="collapse-btn" type="button" aria-label="Toggle section">−</button>
+  <aside id="detailDrawer" class="detail-drawer hidden" aria-hidden="true">
+    <div class="detail-drawer__header">
+      <div>
+        <div id="detailDrawerTitle">Detail</div>
+        <div id="detailDrawerMeta" class="muted"></div>
       </div>
+      <button id="detailDrawerCloseBtn" type="button">Close</button>
     </div>
-    <div class="card-body">
-      <div class="grid" id="summary"></div>
-    </div>
-  </div>
-
-  <div class="card mode-survey" data-card>
-    <div class="card-header" data-collapse-toggle>
-      <h3>Spectrum</h3>
-      <div class="card-header-right">
-        <span class="muted">Click to inspect frequency</span>
-        <button class="collapse-btn" type="button" aria-label="Toggle section">−</button>
-      </div>
-    </div>
-    <div class="card-body">
-      <canvas id="chart" width="1200" height="300"></canvas>
-      <div class="muted" id="clickedFreq" style="margin-top: 10px;">Click spectrum to inspect frequency</div>
-    </div>
-  </div>
-
-  <div class="card mode-survey" data-card>
-    <div class="card-header" data-collapse-toggle>
-      <h3>Detected Peaks</h3>
-      <div class="card-header-right">
-        <span class="muted">Filtered signal hits</span>
-        <button class="collapse-btn" type="button" aria-label="Toggle section">−</button>
-      </div>
-    </div>
-    <div class="card-body">
-      <table>
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Peak Freq</th>
-            <th>Peak dB</th>
-            <th>Median dB</th>
-            <th>Row Range</th>
-          </tr>
-        </thead>
-        <tbody id="eventsBody"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <div id="busyOverlay" class="overlay" aria-hidden="true">
-    <div class="overlay-card">
-      <div class="spinner"></div>
-      <div class="overlay-text">
-        <div id="busyTitle" class="overlay-title">Working…</div>
-        <div id="busySubtitle" class="overlay-subtitle">Please wait</div>
-      </div>
-    </div>
-  </div>
+    <div id="detailDrawerBody"></div>
+  </aside>
 
   <script src="/js/app.js"></script>
 </body>
