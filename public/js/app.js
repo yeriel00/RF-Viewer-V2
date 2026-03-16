@@ -184,11 +184,6 @@ function fmtShortTime(ts) {
   }
 }
 
-function shortJoin(list, max = 2) {
-  if (!Array.isArray(list) || !list.length) return "--";
-  return list.slice(0, max).join(", ");
-}
-
 function isoNow() {
   return new Date().toISOString();
 }
@@ -284,7 +279,7 @@ function updateModeUi() {
         : "Locked: unknown";
     }
 
-    cards.forEach(card => {
+    cards.forEach((card) => {
       card.classList.remove("mode-survey", "mode-paused", "mode-listen");
       card.classList.add("mode-track");
     });
@@ -303,7 +298,7 @@ function updateModeUi() {
       }
     }
 
-    cards.forEach(card => {
+    cards.forEach((card) => {
       card.classList.remove("mode-survey", "mode-track", "mode-listen");
       card.classList.add("mode-paused");
     });
@@ -319,7 +314,7 @@ function updateModeUi() {
       lockedFreqBadge.textContent = freq ? `Listening: ${freq}` : "Listening";
     }
 
-    cards.forEach(card => {
+    cards.forEach((card) => {
       card.classList.remove("mode-survey", "mode-track", "mode-paused");
       card.classList.add("mode-listen");
     });
@@ -334,7 +329,7 @@ function updateModeUi() {
       lockedFreqBadge.textContent = "No lock";
     }
 
-    cards.forEach(card => {
+    cards.forEach((card) => {
       card.classList.remove("mode-track", "mode-paused", "mode-listen");
       card.classList.add("mode-survey");
     });
@@ -464,6 +459,59 @@ function getWifiDisplayLabel(entry) {
     : entry.ssid;
 }
 
+function shortUuid(uuid) {
+  const value = String(uuid || "");
+  return value.length > 18 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
+}
+
+function renderBleEnrichmentHtml(entry) {
+  const manufacturerIds = Array.isArray(entry.manufacturer_ids) ? entry.manufacturer_ids : [];
+  const serviceUuids = Array.isArray(entry.service_uuids) ? entry.service_uuids : [];
+  const txPower = typeof entry.tx_power === "number" ? `${entry.tx_power} dBm` : "--";
+  const lastRssi = typeof entry.last_rssi === "number" ? entry.last_rssi : null;
+  const pathLoss = (typeof entry.tx_power === "number" && typeof lastRssi === "number")
+    ? `${Math.round(entry.tx_power - lastRssi)} dB`
+    : "--";
+
+  const manufacturerLabel = manufacturerIds.length
+    ? manufacturerIds.slice(0, 3).join(", ")
+    : "--";
+
+  const serviceLabel = serviceUuids.length
+    ? serviceUuids.slice(0, 2).map(shortUuid).join(", ")
+    : "--";
+
+  return `
+    <div class="ble-related">
+      <div>Co IDs: ${escapeHtml(manufacturerLabel)}</div>
+      <div class="ble-sub">UUIDs: ${escapeHtml(String(serviceUuids.length))}${serviceUuids.length ? ` • ${escapeHtml(serviceLabel)}` : ""}</div>
+      <div class="ble-sub">Tx: ${escapeHtml(txPower)} • Path loss: ${escapeHtml(pathLoss)}</div>
+      <div class="ble-sub">Probe: passive only</div>
+    </div>
+  `;
+}
+
+function renderWifiEnrichmentHtml(entry) {
+  const match = entry.match || {};
+  const passive = match.passive || {};
+
+  const vendor = match.vendorGuess || "--";
+  const oui = passive.oui || "--";
+  const band = passive.band || "--";
+  const channel = passive.channel || entry.channel || "--";
+  const security = passive.security || entry.security || "--";
+  const hiddenState = passive.hiddenSsid ? "Hidden SSID" : "Visible SSID";
+
+  return `
+    <div class="wifi-related">
+      <div>Vendor: ${escapeHtml(vendor)}</div>
+      <div class="wifi-sub">OUI: ${escapeHtml(oui)} • Band: ${escapeHtml(band)}</div>
+      <div class="wifi-sub">Ch: ${escapeHtml(String(channel))} • Sec: ${escapeHtml(String(security))}</div>
+      <div class="wifi-sub">${escapeHtml(hiddenState)} • Probe: passive only</div>
+    </div>
+  `;
+}
+
 function loadMemoryStore(key) {
   try {
     const raw = localStorage.getItem(key);
@@ -554,7 +602,7 @@ function trimMemoryStore(store, type) {
   });
 
   const trimmed = {};
-  entries.slice(0, MEMORY_LIMIT).forEach(entry => {
+  entries.slice(0, MEMORY_LIMIT).forEach((entry) => {
     trimmed[entry.key] = entry;
   });
   return trimmed;
@@ -564,21 +612,21 @@ function mergeBleMemory(summaryData) {
   const devices = Array.isArray(summaryData?.devices) ? summaryData.devices : [];
   const now = isoNow();
 
-  Object.values(bleMemory).forEach(entry => {
+  Object.values(bleMemory).forEach((entry) => {
     entry.activeNow = false;
   });
 
-  devices.forEach(device => {
+  devices.forEach((device) => {
     const key = getBleMemoryKey(device);
     if (!key) return;
 
     const existing = bleMemory[key] || {};
     const maxRssi = [existing.max_rssi, device.max_rssi, device.last_rssi]
-      .filter(v => typeof v === "number")
+      .filter((v) => typeof v === "number")
       .reduce((acc, v) => Math.max(acc, v), -Infinity);
 
     const minRssi = [existing.min_rssi, device.min_rssi, device.last_rssi]
-      .filter(v => typeof v === "number")
+      .filter((v) => typeof v === "number")
       .reduce((acc, v) => Math.min(acc, v), Infinity);
 
     bleMemory[key] = {
@@ -612,21 +660,21 @@ function mergeWifiMemory(summaryData) {
   const networks = Array.isArray(summaryData?.networks) ? summaryData.networks : [];
   const now = isoNow();
 
-  Object.values(wifiMemory).forEach(entry => {
+  Object.values(wifiMemory).forEach((entry) => {
     entry.activeNow = false;
   });
 
-  networks.forEach(network => {
+  networks.forEach((network) => {
     const key = getWifiMemoryKey(network);
     if (!key) return;
 
     const existing = wifiMemory[key] || {};
     const maxSignal = [existing.max_signal, network.max_signal, network.last_signal]
-      .filter(v => typeof v === "number")
+      .filter((v) => typeof v === "number")
       .reduce((acc, v) => Math.max(acc, v), -Infinity);
 
     const minSignal = [existing.min_signal, network.min_signal, network.last_signal]
-      .filter(v => typeof v === "number")
+      .filter((v) => typeof v === "number")
       .reduce((acc, v) => Math.min(acc, v), Infinity);
 
     wifiMemory[key] = {
@@ -665,7 +713,7 @@ function buildBleWifiLink(bleEntry, wifiEntry) {
     reasons.push("both matched");
   }
 
-  if (wifiMatch.family === "flock_wifi") {
+  if (wifiMatch.family === "flock_exact" || wifiMatch.family === "flock_family") {
     score += 18;
     reasons.push("wifi flock pattern");
   }
@@ -681,13 +729,13 @@ function buildBleWifiLink(bleEntry, wifiEntry) {
   }
 
   const ageDiffMs = Math.abs(parseTimeMs(bleEntry.last_seen) - parseTimeMs(wifiEntry.last_seen));
-  if (ageDiffMs <= 15_000) {
+  if (ageDiffMs <= 15000) {
     score += 20;
     reasons.push("same time window");
-  } else if (ageDiffMs <= 60_000) {
+  } else if (ageDiffMs <= 60000) {
     score += 12;
     reasons.push("close time window");
-  } else if (ageDiffMs <= 5 * 60_000) {
+  } else if (ageDiffMs <= 5 * 60000) {
     score += 5;
     reasons.push("recently co-seen");
   }
@@ -733,13 +781,17 @@ function recomputeRelatedLinks() {
   const bleEntries = Object.values(bleMemory);
   const wifiEntries = Object.values(wifiMemory);
 
-  bleEntries.forEach(entry => { entry.related = null; });
-  wifiEntries.forEach(entry => { entry.related = null; });
+  bleEntries.forEach((entry) => {
+    entry.related = null;
+  });
+  wifiEntries.forEach((entry) => {
+    entry.related = null;
+  });
 
-  bleEntries.forEach(bleEntry => {
+  bleEntries.forEach((bleEntry) => {
     let best = null;
 
-    wifiEntries.forEach(wifiEntry => {
+    wifiEntries.forEach((wifiEntry) => {
       const link = buildBleWifiLink(bleEntry, wifiEntry);
       if (link.confidence === "none") return;
 
@@ -768,10 +820,10 @@ function recomputeRelatedLinks() {
     }
   });
 
-  wifiEntries.forEach(wifiEntry => {
+  wifiEntries.forEach((wifiEntry) => {
     let best = null;
 
-    bleEntries.forEach(bleEntry => {
+    bleEntries.forEach((bleEntry) => {
       const link = buildBleWifiLink(bleEntry, wifiEntry);
       if (link.confidence === "none") return;
 
@@ -971,11 +1023,11 @@ function findTrackedEvent(events, scanner) {
   const maxOffset = spanHz / 2;
 
   const candidates = events
-    .map(e => ({
+    .map((e) => ({
       ...e,
       offsetHz: Math.abs(Number(e.peakHz) - centerHz)
     }))
-    .filter(e => e.offsetHz <= maxOffset);
+    .filter((e) => e.offsetHz <= maxOffset);
 
   if (!candidates.length) return null;
 
@@ -1161,8 +1213,8 @@ function drawTrace(points) {
 
   const minX = points[0].hz;
   const maxX = points[points.length - 1].hz;
-  const minY = Math.min(...points.map(p => p.db));
-  const maxY = Math.max(...points.map(p => p.db));
+  const minY = Math.min(...points.map((p) => p.db));
+  const maxY = Math.max(...points.map((p) => p.db));
 
   const pad = 30;
   const w = canvas.width - pad * 2;
@@ -1220,7 +1272,7 @@ function renderData(data) {
       .slice()
       .reverse()
       .slice(0, 200)
-      .map(e => `
+      .map((e) => `
         <tr>
           <td>${e.timestamp}</td>
           <td>${fmtHz(e.peakHz)}</td>
@@ -1454,8 +1506,8 @@ function renderBleData(status, summaryData) {
   }
 
   const rememberedEntries = getBleMemoryEntriesSorted();
-  const lockedCount = rememberedEntries.filter(entry => entry.locked).length;
-  const activeCount = rememberedEntries.filter(entry => entry.activeNow && getEntryAgeMs(entry) <= ACTIVE_AGE_MS).length;
+  const lockedCount = rememberedEntries.filter((entry) => entry.locked).length;
+  const activeCount = rememberedEntries.filter((entry) => entry.activeNow && getEntryAgeMs(entry) <= ACTIVE_AGE_MS).length;
 
   if (bleRememberedBadge) bleRememberedBadge.textContent = `Remembered: ${rememberedEntries.length}`;
   if (bleMemoryInfo) bleMemoryInfo.textContent = `BLE memory stored locally in this browser • ${activeCount} active • ${lockedCount} locked • max ${MEMORY_LIMIT}`;
@@ -1475,7 +1527,7 @@ function renderBleData(status, summaryData) {
   if (!rememberedEntries.length) {
     bleDevicesBody.innerHTML = `
       <tr>
-        <td colspan="8" class="muted">No BLE devices captured yet.</td>
+        <td colspan="9" class="muted">No BLE devices captured yet.</td>
       </tr>
     `;
     return;
@@ -1541,6 +1593,7 @@ function renderBleData(status, summaryData) {
           <div>${escapeHtml(`${entry.seen_count ?? 0}x`)}</div>
           <div class="ble-sub">${escapeHtml(getSeenLabel(entry))}</div>
         </td>
+        <td>${renderBleEnrichmentHtml(entry)}</td>
         <td>${relatedHtml}</td>
         <td class="ble-why">${escapeHtml(why)}</td>
         <td>
@@ -1627,8 +1680,8 @@ function renderWifiData(status, summaryData) {
   }
 
   const rememberedEntries = getWifiMemoryEntriesSorted();
-  const lockedCount = rememberedEntries.filter(entry => entry.locked).length;
-  const activeCount = rememberedEntries.filter(entry => entry.activeNow && getEntryAgeMs(entry) <= ACTIVE_AGE_MS).length;
+  const lockedCount = rememberedEntries.filter((entry) => entry.locked).length;
+  const activeCount = rememberedEntries.filter((entry) => entry.activeNow && getEntryAgeMs(entry) <= ACTIVE_AGE_MS).length;
 
   if (wifiRememberedBadge) wifiRememberedBadge.textContent = `Remembered: ${rememberedEntries.length}`;
   if (wifiMemoryInfo) wifiMemoryInfo.textContent = `Wi-Fi memory stored locally in this browser • ${activeCount} active • ${lockedCount} locked • max ${MEMORY_LIMIT}`;
@@ -1658,15 +1711,20 @@ function renderWifiData(status, summaryData) {
     const match = entry.match || {};
     const confidence = match.confidence || "none";
     const matched = Boolean(match.matched);
+    const label = match.label || "Candidate";
+
     const matchText = matched
-      ? `Flock Wi-Fi • ${confidence.toUpperCase()}`
+      ? `${label} • ${confidence.toUpperCase()}`
       : "No match";
 
     const distanceClass = match.proximity || "unknown";
     const distanceText = match.proximityLabel || "Unknown";
-    const why = Array.isArray(match.reasons) && match.reasons.length
-      ? match.reasons.slice(0, 3).join(" • ")
-      : "--";
+
+    const whyParts = Array.isArray(match.reasons) ? match.reasons.slice(0, 3) : [];
+    if (Array.isArray(match.exclusions) && match.exclusions.length) {
+      whyParts.push(`Excluded: ${match.exclusions[0]}`);
+    }
+    const why = whyParts.length ? whyParts.join(" • ") : "--";
 
     const rowClasses = [];
     const staleClass = getStaleClass(entry);
@@ -2117,7 +2175,7 @@ async function loadFiles() {
   try {
     const data = await fetchJson("/api/files");
     if (fileSelect) {
-      fileSelect.innerHTML = data.files.map(f => `<option value="${f}">${f}</option>`).join("");
+      fileSelect.innerHTML = data.files.map((f) => `<option value="${f}">${f}</option>`).join("");
       if (data.files.length) {
         fileSelect.value = "live";
         await loadCurrent();
