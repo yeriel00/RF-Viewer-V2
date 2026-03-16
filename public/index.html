@@ -89,12 +89,20 @@
     #bleEventsBadge,
     #bleMatchBadge,
     #bleMatchBreakdownBadge,
+    #bleIntelBadge,
+    #bleExposureBadge,
     #wifiStateBadge,
     #wifiUniqueBadge,
     #wifiActiveBadge,
     #wifiEventsBadge,
     #wifiMatchBadge,
-    #wifiMatchBreakdownBadge {
+    #wifiMatchBreakdownBadge,
+    #wifiIntelBadge,
+    #wifiExposureBadge,
+    #intelStateBadge,
+    #intelEntriesBadge,
+    #intelReachableBadge,
+    #intelExposureBadge {
       padding: 4px 8px;
       font-size: 10.5px;
     }
@@ -973,6 +981,8 @@
             <span id="bleEventsBadge" class="chip">Events: 0</span>
             <span id="bleMatchBadge" class="chip">Matches: 0</span>
             <span id="bleMatchBreakdownBadge" class="chip">H/M/L/B/P/R: 0/0/0/0/0/0</span>
+            <span id="bleIntelBadge" class="chip">Intel: 0</span>
+            <span id="bleExposureBadge" class="chip">Exposure: 0</span>
           </div>
 
           <div id="bleStrongestBadge" class="muted" style="margin-top:10px;">Strongest: --</div>
@@ -1025,6 +1035,8 @@
             <span id="wifiEventsBadge" class="chip">Events: 0</span>
             <span id="wifiMatchBadge" class="chip">Matches: 0</span>
             <span id="wifiMatchBreakdownBadge" class="chip">H/M/L: 0/0/0</span>
+            <span id="wifiIntelBadge" class="chip">Intel: 0</span>
+            <span id="wifiExposureBadge" class="chip">Exposure: 0</span>
           </div>
 
           <div id="wifiStrongestBadge" class="muted" style="margin-top:10px;">Strongest: --</div>
@@ -1052,6 +1064,26 @@
               </tbody>
             </table>
           </div>
+        </div>
+      </section>
+
+      <section class="card w-12" data-card>
+        <div class="card-header" data-collapse-toggle>
+          <div class="card-header-left">
+            <h3>Authorized Exposure Intel</h3>
+            <div class="muted">Metadata-only reachability and exposure summaries merged into BLE/Wi-Fi hits</div>
+          </div>
+          <button class="collapse-btn" type="button">−</button>
+        </div>
+        <div class="card-body">
+          <div class="btn-row">
+            <span id="intelStateBadge" class="chip">Intel: loading...</span>
+            <span id="intelEntriesBadge" class="chip">Entries: 0</span>
+            <span id="intelReachableBadge" class="chip">Reachable: 0</span>
+            <span id="intelExposureBadge" class="chip">E1-E4: 0</span>
+          </div>
+          <div id="intelStatusText" class="muted" style="margin-top:10px;">No authorized intel loaded yet.</div>
+          <div id="intelUpdatedText" class="muted" style="margin-top:6px;">Add metadata-only intel into <code>data/device-intel.json</code> or post it to <code>/api/intel/upsert</code>.</div>
         </div>
       </section>
     </div>

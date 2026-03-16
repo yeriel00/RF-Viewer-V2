@@ -27,6 +27,7 @@ const BLE_CONTROL_FILE = path.join(DATA_DIR, "ble-control.json");
 const WIFI_STATUS_FILE = path.join(DATA_DIR, "wifi-status.json");
 const WIFI_SUMMARY_FILE = path.join(DATA_DIR, "wifi-summary.json");
 const WIFI_CONTROL_FILE = path.join(DATA_DIR, "wifi-control.json");
+const DEVICE_INTEL_FILE = path.join(DATA_DIR, "device-intel.json");
 
 const liveRows = [];
 const MAX_LIVE_ROWS = 100;
@@ -173,6 +174,165 @@ function writeWifiControl(enabled) {
   };
   saveJsonFile(WIFI_CONTROL_FILE, next);
   return next;
+}
+
+function normalizeIntelKey(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function uniqueTextList(values = []) {
+  return [...new Set(
+    (Array.isArray(values) ? values : [values])
+      .map((value) => normalizeIntelKey(value))
+      .filter(Boolean)
+  )];
+}
+
+function ensureDeviceIntelFile() {
+  try {
+    ensureDataDir();
+    if (!fs.existsSync(DEVICE_INTEL_FILE)) {
+      saveJsonFile(DEVICE_INTEL_FILE, {
+        updatedAt: new Date().toISOString(),
+        items: []
+      });
+    }
+  } catch (err) {
+    console.error("Failed to ensure device intel file:", err.message);
+  }
+}
+
+function normalizeIntelPort(port = {}) {
+  const portNum = Number(port.port);
+  return {
+    port: Number.isFinite(portNum) && portNum > 0 ? portNum : null,
+    service: String(port.service || "").trim().toLowerCase() || null,
+    transport: String(port.transport || "tcp").trim().toLowerCase() || "tcp",
+    surfaceType: String(port.surfaceType || port.surface || "identity").trim().toLowerCase() || "identity",
+    authObserved: typeof port.authObserved === "boolean" ? port.authObserved : null,
+    status: String(port.status || "present").trim().toLowerCase() || "present",
+    summary: String(port.summary || "").trim() || null,
+    fingerprintSummary: String(port.fingerprintSummary || "").trim() || null,
+    exposureClass: String(port.exposureClass || "").trim().toUpperCase() || null,
+    method: String(port.method || "").trim().toUpperCase() || null
+  };
+}
+
+function normalizeIntelItem(item = {}) {
+  const key = normalizeIntelKey(item.key || item.id || item.address || item.bssid || item.mac);
+  if (!key) return null;
+
+  const ports = Array.isArray(item.ports)
+    ? item.ports.map(normalizeIntelPort).filter((entry) => entry.port || entry.service || entry.surfaceType)
+    : [];
+
+  const aliases = uniqueTextList(item.aliases || []).filter((alias) => alias !== key);
+  const exposureClass = String(item.exposureClass || item.exposure || "E0").trim().toUpperCase() || "E0";
+  const scope = String(item.scope || item.type || "generic").trim().toLowerCase() || "generic";
+  const confidence = String(item.confidence || "medium").trim().toLowerCase() || "medium";
+  const latencyMs = Number(item.latencyMs);
+
+  return {
+    key,
+    aliases,
+    scope,
+    label: String(item.label || "").trim() || null,
+    summary: String(item.summary || "").trim() || null,
+    reachable: typeof item.reachable === "boolean" ? item.reachable : null,
+    latencyMs: Number.isFinite(latencyMs) && latencyMs >= 0 ? Math.round(latencyMs) : null,
+    ip: String(item.ip || "").trim() || null,
+    hostname: String(item.hostname || "").trim() || null,
+    confidence,
+    exposureClass,
+    authObserved: typeof item.authObserved === "boolean" ? item.authObserved : null,
+    evidenceMode: String(item.evidenceMode || "metadata-only").trim().toLowerCase() || "metadata-only",
+    surfaceSummary: uniqueTextList(item.surfaceSummary || []),
+    protocolsSeen: uniqueTextList(item.protocolsSeen || []),
+    servicePorts: Array.isArray(item.servicePorts)
+      ? [...new Set(item.servicePorts.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0))]
+      : [],
+    ports,
+    notes: String(item.notes || "").trim() || null,
+    source: String(item.source || "manual").trim().toLowerCase() || "manual",
+    pathFingerprint: String(item.pathFingerprint || "").trim() || null,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function readDeviceIntelStore() {
+  ensureDeviceIntelFile();
+  const raw = loadJsonDiskFile(DEVICE_INTEL_FILE, { updatedAt: null, items: [] });
+  const items = Array.isArray(raw.items)
+    ? raw.items.map(normalizeIntelItem).filter(Boolean)
+    : [];
+
+  return {
+    updatedAt: raw.updatedAt || null,
+    items
+  };
+}
+
+function summarizeDeviceIntelStore(store) {
+  const items = Array.isArray(store?.items) ? store.items : [];
+  const summary = {
+    total: items.length,
+    reachable: 0,
+    ble: 0,
+    wifi: 0,
+    generic: 0,
+    exposed: 0,
+    byExposure: { E0: 0, E1: 0, E2: 0, E3: 0, E4: 0 }
+  };
+
+  for (const item of items) {
+    if (item.reachable) summary.reachable += 1;
+    if (item.scope === "ble") summary.ble += 1;
+    else if (item.scope === "wifi") summary.wifi += 1;
+    else summary.generic += 1;
+
+    const exposure = item.exposureClass || "E0";
+    if (!summary.byExposure[exposure]) summary.byExposure[exposure] = 0;
+    summary.byExposure[exposure] += 1;
+    if (exposure !== "E0") summary.exposed += 1;
+  }
+
+  return summary;
+}
+
+function writeDeviceIntelStore(store = {}) {
+  const normalizedStore = {
+    updatedAt: new Date().toISOString(),
+    items: Array.isArray(store.items) ? store.items.map(normalizeIntelItem).filter(Boolean) : []
+  };
+  saveJsonFile(DEVICE_INTEL_FILE, normalizedStore);
+  return normalizedStore;
+}
+
+function upsertDeviceIntelItems(items = []) {
+  const store = readDeviceIntelStore();
+  const byKey = new Map(store.items.map((item) => [item.key, item]));
+
+  for (const incoming of items) {
+    const normalized = normalizeIntelItem(incoming);
+    if (!normalized) continue;
+
+    const previous = byKey.get(normalized.key) || {};
+    byKey.set(normalized.key, {
+      ...previous,
+      ...normalized,
+      aliases: uniqueTextList([...(previous.aliases || []), ...(normalized.aliases || [])])
+    });
+  }
+
+  return writeDeviceIntelStore({ items: [...byKey.values()] });
+}
+
+function deleteDeviceIntelItem(key) {
+  const normalizedKey = normalizeIntelKey(key);
+  const store = readDeviceIntelStore();
+  return writeDeviceIntelStore({
+    items: store.items.filter((item) => item.key !== normalizedKey)
+  });
 }
 
 let currentSettings = loadJsonFile(SETTINGS_FILE, DEFAULT_SETTINGS);
@@ -683,96 +843,11 @@ function syncListenPipeline() {
 }
 
 /* -----------------------------
-   Live file helpers
+   Core helpers
 ----------------------------- */
 
-function safeFilename(name) {
-  return String(name || "")
-    .replace(/[^a-zA-Z0-9._-]/g, "_")
-    .replace(/^_+/, "")
-    .slice(0, 200);
-}
-
-function ensureScannerDataDir() {
-  ensureDataDir();
-}
-
-function getRecordingsDir() {
-  ensureScannerDataDir();
-  const dir = path.join(DATA_DIR, "recordings");
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  return dir;
-}
-
-function listRecordingFiles() {
-  const dir = getRecordingsDir();
-  return fs.readdirSync(dir)
-    .filter(name => name.toLowerCase().endsWith(".json"))
-    .sort((a, b) => b.localeCompare(a));
-}
-
-function buildRecordingPath(name) {
-  return path.join(getRecordingsDir(), safeFilename(name));
-}
-
-function formatTimestampForFilename(date = new Date()) {
-  const pad = value => String(value).padStart(2, "0");
-  return [
-    date.getUTCFullYear(),
-    pad(date.getUTCMonth() + 1),
-    pad(date.getUTCDate())
-  ].join("") + "-" + [
-    pad(date.getUTCHours()),
-    pad(date.getUTCMinutes()),
-    pad(date.getUTCSeconds())
-  ].join("");
-}
-
-function saveRecordingFile(label = "recording") {
-  const filename = `${formatTimestampForFilename()}-${safeFilename(label || "recording")}.json`;
-  const filePath = buildRecordingPath(filename);
-
-  const payload = {
-    label,
-    createdAt: new Date().toISOString(),
-    rows: recordedRows
-  };
-
-  fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
-  return filename;
-}
-
-function readRecordingFile(name) {
-  const filePath = buildRecordingPath(name);
-  if (!filePath.startsWith(getRecordingsDir())) {
-    throw new Error("Invalid recording path");
-  }
-
-  if (!fs.existsSync(filePath)) {
-    throw new Error("Recording not found");
-  }
-
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
-}
-
-function deleteRecordingFile(name) {
-  const filePath = buildRecordingPath(name);
-  if (!filePath.startsWith(getRecordingsDir())) {
-    throw new Error("Invalid recording path");
-  }
-
-  if (fs.existsSync(filePath)) {
-    fs.unlinkSync(filePath);
-  }
-}
-
-function hzToM(value) {
-  const hz = Number(value);
-  if (!Number.isFinite(hz)) return "";
-  const mhz = hz / 1000000;
-  return `${mhz.toFixed(3).replace(/\.?0+$/, "")}M`;
+function hzToM(hz) {
+  return `${(hz / 1e6).toFixed(6)}M`;
 }
 
 function buildTrackFreqRange(centerHz, spanHz, binHz) {
@@ -874,6 +949,7 @@ saveJsonFile(SCANNER_FILE, currentScanner);
 saveJsonFile(SCANNER_RUNTIME_FILE, buildRuntimeScanner(currentScanner));
 ensureBleControlFile();
 ensureWifiControlFile();
+ensureDeviceIntelFile();
 syncListenPipeline();
 
 function addLiveLine(line) {
@@ -1128,16 +1204,31 @@ const webServer = http.createServer(async (req, res) => {
       const squelch = Number(incoming.squelch ?? currentScanner.listen?.squelch ?? 0);
 
       if (!frequency) {
-        return sendJson(res, { ok: false, error: "Missing or invalid frequency" }, 400);
+        return sendJson(res, {
+          ok: false,
+          error: "A valid frequency is required, for example 162.55M or 99.5M"
+        }, 400);
       }
 
       if (!["fm", "wbfm", "am"].includes(modulation)) {
-        return sendJson(res, { ok: false, error: "Unsupported modulation" }, 400);
+        return sendJson(res, {
+          ok: false,
+          error: "Unsupported modulation. Use fm, wbfm, or am."
+        }, 400);
       }
+
+      const previousMode =
+        currentScanner.mode === "track" || currentScanner.mode === "survey"
+          ? currentScanner.mode
+          : currentScanner.lastActiveMode === "track"
+            ? "track"
+            : "survey";
 
       persistScanner({
         ...currentScanner,
         mode: "listen",
+        lastActiveMode: previousMode,
+        targetFrequency: frequency,
         listen: {
           ...currentScanner.listen,
           enabled: true,
@@ -1145,14 +1236,12 @@ const webServer = http.createServer(async (req, res) => {
           modulation,
           gain,
           squelch
-        },
-        targetFrequency: frequency
-      }, { clearRows: false });
+        }
+      });
 
       return sendJson(res, {
         ok: true,
-        scanner: currentScanner,
-        status: listenStatus
+        scanner: currentScanner
       });
     } catch (e) {
       return sendJson(res, { ok: false, error: e.message }, 400);
@@ -1169,155 +1258,116 @@ const webServer = http.createServer(async (req, res) => {
         ...currentScanner.listen,
         enabled: false
       }
-    }, { clearRows: false });
+    });
 
     return sendJson(res, {
       ok: true,
-      scanner: currentScanner,
-      status: listenStatus
+      scanner: currentScanner
     });
-  }
-
-  if (req.method === "POST" && parsed.pathname === "/api/listen/save") {
-    try {
-      const incoming = JSON.parse((await collectRequestBody(req)) || "{}");
-      const frequency = normalizeFrequencyInput(
-        incoming.frequency ?? incoming.freq ?? currentScanner.listen?.frequency
-      );
-
-      const next = {
-        ...currentScanner,
-        listen: {
-          ...currentScanner.listen,
-          ...incoming,
-          ...(frequency ? { frequency } : {})
-        }
-      };
-
-      persistScanner(next, { clearRows: false });
-      return sendJson(res, { ok: true, scanner: currentScanner });
-    } catch (e) {
-      return sendJson(res, { ok: false, error: e.message }, 400);
-    }
-  }
-
-  if (req.method === "GET" && parsed.pathname === "/api/recordings") {
-    return sendJson(res, {
-      ok: true,
-      files: listRecordingFiles()
-    });
-  }
-
-  if (req.method === "POST" && parsed.pathname === "/api/recordings/save") {
-    try {
-      const incoming = JSON.parse((await collectRequestBody(req)) || "{}");
-      const label = incoming.label || "recording";
-      const filename = saveRecordingFile(label);
-      return sendJson(res, {
-        ok: true,
-        filename
-      });
-    } catch (e) {
-      return sendJson(res, { ok: false, error: e.message }, 500);
-    }
-  }
-
-  if (req.method === "GET" && parsed.pathname === "/api/recordings/read") {
-    try {
-      const file = parsed.query.file;
-      if (!file) {
-        return sendJson(res, { ok: false, error: "Missing file" }, 400);
-      }
-      const payload = readRecordingFile(file);
-      return sendJson(res, { ok: true, ...payload });
-    } catch (e) {
-      return sendJson(res, { ok: false, error: e.message }, 404);
-    }
-  }
-
-  if (req.method === "POST" && parsed.pathname === "/api/recordings/delete") {
-    try {
-      const incoming = JSON.parse((await collectRequestBody(req)) || "{}");
-      if (!incoming.file) {
-        return sendJson(res, { ok: false, error: "Missing file" }, 400);
-      }
-      deleteRecordingFile(incoming.file);
-      return sendJson(res, { ok: true });
-    } catch (e) {
-      return sendJson(res, { ok: false, error: e.message }, 404);
-    }
   }
 
   if (req.method === "GET" && parsed.pathname === "/api/ble/status") {
+    const control = readBleControl();
     const status = loadJsonDiskFile(BLE_STATUS_FILE, {
-      running: false,
-      enabled: readBleControl().enabled,
-      updated_at: null
-    });
-    return sendJson(res, { ok: true, status });
-  }
-
-  if (req.method === "GET" && parsed.pathname === "/api/ble/summary") {
-    const summary = loadJsonDiskFile(BLE_SUMMARY_FILE, {
-      ok: true,
-      devices: [],
-      updated_at: null
-    });
-
-    const status = loadJsonDiskFile(BLE_STATUS_FILE, {
-      running: false,
-      enabled: readBleControl().enabled,
-      updated_at: null
+      status: "unknown",
+      enabled: control.enabled,
+      total_unique_seen: 0,
+      active_unique_seen: 0,
+      total_events: 0
     });
 
     return sendJson(res, {
       ok: true,
-      summary: enrichBleSummary(summary, {
-        enabled: status.enabled !== false
-      }),
-      status
+      control,
+      status: {
+        ...status,
+        enabled: control.enabled
+      }
+    });
+  }
+
+  if (req.method === "GET" && parsed.pathname === "/api/ble/summary") {
+    const control = readBleControl();
+    const summary = loadJsonDiskFile(BLE_SUMMARY_FILE, {
+      status: control.enabled ? "running" : "paused",
+      enabled: control.enabled,
+      total_unique_seen: 0,
+      active_unique_seen: 0,
+      total_events: 0,
+      strongest_active: null,
+      devices: []
+    });
+
+    const enriched = enrichBleSummary({
+      ...summary,
+      enabled: control.enabled
+    });
+
+    return sendJson(res, {
+      ok: true,
+      control,
+      summary: enriched
     });
   }
 
   if (req.method === "POST" && parsed.pathname === "/api/ble/start") {
     const control = writeBleControl(true);
-    return sendJson(res, { ok: true, control });
+    return sendJson(res, {
+      ok: true,
+      control
+    });
   }
 
   if (req.method === "POST" && parsed.pathname === "/api/ble/stop") {
     const control = writeBleControl(false);
-    return sendJson(res, { ok: true, control });
+    return sendJson(res, {
+      ok: true,
+      control
+    });
   }
 
   if (req.method === "GET" && parsed.pathname === "/api/wifi/status") {
+    const control = readWifiControl();
     const status = loadJsonDiskFile(WIFI_STATUS_FILE, {
-      running: false,
-      enabled: readWifiControl().enabled,
-      updated_at: null
-    });
-    return sendJson(res, { ok: true, status });
-  }
-
-  if (req.method === "GET" && parsed.pathname === "/api/wifi/summary") {
-    const summary = loadJsonDiskFile(WIFI_SUMMARY_FILE, {
-      ok: true,
-      aps: [],
-      clients: [],
-      updated_at: null
-    });
-
-    const status = loadJsonDiskFile(WIFI_STATUS_FILE, {
-      running: false,
-      enabled: readWifiControl().enabled,
-      updated_at: null
+      status: "unknown",
+      enabled: control.enabled,
+      interface: control.interface,
+      total_unique_seen: 0,
+      active_unique_seen: 0,
+      total_events: 0
     });
 
     return sendJson(res, {
       ok: true,
-      summary: enrichWifiSummary(summary, {
-        enabled: status.enabled !== false
-      }),
-      status
+      control,
+      status: {
+        ...status,
+        enabled: control.enabled
+      }
+    });
+  }
+
+  if (req.method === "GET" && parsed.pathname === "/api/wifi/summary") {
+    const control = readWifiControl();
+    const summary = loadJsonDiskFile(WIFI_SUMMARY_FILE, {
+      status: control.enabled ? "running" : "paused",
+      enabled: control.enabled,
+      total_unique_seen: 0,
+      active_unique_seen: 0,
+      total_events: 0,
+      strongest_active: null,
+      networks: []
+    });
+
+    const enriched = enrichWifiSummary({
+      ...summary,
+      enabled: control.enabled
+    });
+
+    return sendJson(res, {
+      ok: true,
+      control,
+      summary: enriched
     });
   }
 
@@ -1329,6 +1379,68 @@ const webServer = http.createServer(async (req, res) => {
   if (req.method === "POST" && parsed.pathname === "/api/wifi/stop") {
     const control = writeWifiControl(false);
     return sendJson(res, { ok: true, control });
+  }
+
+  if (req.method === "GET" && parsed.pathname === "/api/intel") {
+    const store = readDeviceIntelStore();
+    return sendJson(res, {
+      ok: true,
+      updatedAt: store.updatedAt,
+      items: store.items,
+      summary: summarizeDeviceIntelStore(store)
+    });
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/intel/upsert") {
+    try {
+      const incoming = JSON.parse((await collectRequestBody(req)) || "{}");
+      const items = Array.isArray(incoming)
+        ? incoming
+        : Array.isArray(incoming.items)
+          ? incoming.items
+          : [incoming];
+
+      const store = upsertDeviceIntelItems(items);
+
+      return sendJson(res, {
+        ok: true,
+        updatedAt: store.updatedAt,
+        items: store.items,
+        summary: summarizeDeviceIntelStore(store)
+      });
+    } catch (e) {
+      return sendJson(res, { ok: false, error: e.message }, 400);
+    }
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/intel/delete") {
+    try {
+      const incoming = JSON.parse((await collectRequestBody(req)) || "{}");
+      if (!incoming.key) {
+        return sendJson(res, { ok: false, error: "Missing key" }, 400);
+      }
+
+      const store = deleteDeviceIntelItem(incoming.key);
+
+      return sendJson(res, {
+        ok: true,
+        updatedAt: store.updatedAt,
+        items: store.items,
+        summary: summarizeDeviceIntelStore(store)
+      });
+    } catch (e) {
+      return sendJson(res, { ok: false, error: e.message }, 400);
+    }
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/intel/clear") {
+    const store = writeDeviceIntelStore({ items: [] });
+    return sendJson(res, {
+      ok: true,
+      updatedAt: store.updatedAt,
+      items: store.items,
+      summary: summarizeDeviceIntelStore(store)
+    });
   }
 
   if (req.method === "GET" && parsed.pathname === "/api/live") {
