@@ -320,12 +320,47 @@ function sortMatchedNetworks(networks) {
   });
 }
 
-function enrichWifiSummary(summary = {}) {
+function enrichWifiSummary(summary = {}, probeResults = null) {
   const networks = Array.isArray(summary.networks) ? summary.networks : [];
-  const enriched = networks.map((network) => ({
-    ...network,
-    match: classifyWifiNetwork(network)
-  }));
+
+  // Build probe lookup by IP for enrichment
+  const probeByIp = new Map();
+  if (probeResults && probeResults.hosts) {
+    for (const [ip, result] of Object.entries(probeResults.hosts)) {
+      probeByIp.set(ip, result);
+    }
+  }
+
+  const enriched = networks.map((network) => {
+    const match = classifyWifiNetwork(network);
+
+    // If this network has probe data (via correlation), enrich the probe field
+    if (network._probeIp && probeByIp.has(network._probeIp)) {
+      const scanResult = probeByIp.get(network._probeIp);
+      const openPorts = scanResult.openPorts || [];
+      if (openPorts.length) {
+        const portSummary = openPorts
+          .map((p) => `${p.service ? p.service.toUpperCase() : "?"}/${p.port}`)
+          .slice(0, 5)
+          .join(", ");
+        match.probe = {
+          mode: "active",
+          reachable: true,
+          ip: network._probeIp,
+          openPortCount: openPorts.length,
+          ports: openPorts.map((p) => ({
+            port: p.port,
+            service: p.service,
+            version: p.version,
+            banner: p.banner ? p.banner.slice(0, 120) : null
+          })),
+          summary: `${openPorts.length} open port(s): ${portSummary}`
+        };
+      }
+    }
+
+    return { ...network, match };
+  });
 
   const sorted = sortMatchedNetworks(enriched);
   const matched = sorted.filter((n) => n.match?.matched);
@@ -347,5 +382,6 @@ function enrichWifiSummary(summary = {}) {
 }
 
 module.exports = {
-  enrichWifiSummary
+  enrichWifiSummary,
+  classifyWifiNetwork
 };

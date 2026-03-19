@@ -8,6 +8,10 @@ const { PassThrough } = require("stream");
 const { listFiles, parseFile, parseLine, buildDataset } = require("./parser");
 const { enrichWifiSummary } = require("./wifi-matcher");
 const { enrichBleSummary } = require("./ble-matcher");
+const { buildIntelFusion } = require("./intel-fusion");
+const { discoverHosts, correlateWifiHosts } = require("./network-discovery");
+const { scanHost, scanHosts, DEFAULT_PORTS } = require("./port-scanner");
+const { probeResultsToIntelItems } = require("./probe-to-intel");
 
 const PORT = 3000;
 const TCP_PORT = 9001;
@@ -28,6 +32,8 @@ const WIFI_STATUS_FILE = path.join(DATA_DIR, "wifi-status.json");
 const WIFI_SUMMARY_FILE = path.join(DATA_DIR, "wifi-summary.json");
 const WIFI_CONTROL_FILE = path.join(DATA_DIR, "wifi-control.json");
 const DEVICE_INTEL_FILE = path.join(DATA_DIR, "device-intel.json");
+const PROBE_RESULTS_FILE = path.join(DATA_DIR, "probe-results.json");
+const HOST_DISCOVERY_FILE = path.join(DATA_DIR, "host-discovery.json");
 
 const liveRows = [];
 const MAX_LIVE_ROWS = 100;
@@ -67,6 +73,18 @@ const DEFAULT_SCANNER = {
     modulation: "fm",
     gain: 30,
     squelch: 0
+  },
+  probe: {
+    enabled: false,
+    autoDiscover: false,
+    discoverIntervalSec: 300,
+    autoScan: false,
+    scanIntervalSec: 600,
+    ports: [21, 22, 23, 80, 443, 554, 1883, 3000, 3306, 5432, 6379, 8080, 8443, 8554, 8883, 9090, 27017],
+    timeoutMs: 2000,
+    concurrency: 10,
+    subnetAllowList: [],
+    subnetDenyList: []
   }
 };
 
@@ -337,6 +355,169 @@ function deleteDeviceIntelItem(key) {
 
 let currentSettings = loadJsonFile(SETTINGS_FILE, DEFAULT_SETTINGS);
 let currentScanner = loadJsonFile(SCANNER_FILE, DEFAULT_SCANNER);
+
+/* -----------------------------
+   Probe state
+----------------------------- */
+
+let probeState = {
+  status: "idle",
+  message: "No probe activity",
+  lastDiscovery: null,
+  lastScan: null,
+  hostsDiscovered: 0,
+  hostsScanned: 0,
+  scanInProgress: false,
+  discoveryInProgress: false,
+  updatedAt: new Date().toISOString()
+};
+
+let autoProbeDiscoverTimer = null;
+let autoProbeScanTimer = null;
+
+function setProbeState(patch) {
+  probeState = { ...probeState, ...patch, updatedAt: new Date().toISOString() };
+}
+
+function readProbeResults() {
+  return loadJsonDiskFile(PROBE_RESULTS_FILE, { updatedAt: null, hosts: {} });
+}
+
+function writeProbeResults(results) {
+  const out = { updatedAt: new Date().toISOString(), hosts: results.hosts || {} };
+  saveJsonFile(PROBE_RESULTS_FILE, out);
+  return out;
+}
+
+function readHostDiscovery() {
+  return loadJsonDiskFile(HOST_DISCOVERY_FILE, { discoveredAt: null, subnets: [], hostCount: 0, hosts: [] });
+}
+
+function writeHostDiscovery(discovery) {
+  saveJsonFile(HOST_DISCOVERY_FILE, discovery);
+  return discovery;
+}
+
+function getProbeConfig() {
+  return currentScanner.probe || {
+    enabled: false,
+    autoDiscover: false,
+    discoverIntervalSec: 300,
+    autoScan: false,
+    scanIntervalSec: 600,
+    ports: DEFAULT_PORTS,
+    timeoutMs: 2000,
+    concurrency: 10,
+    subnetAllowList: [],
+    subnetDenyList: []
+  };
+}
+
+async function runDiscovery() {
+  if (probeState.discoveryInProgress) {
+    return readHostDiscovery();
+  }
+  setProbeState({ discoveryInProgress: true, status: "discovering", message: "Running host discovery..." });
+  try {
+    const config = getProbeConfig();
+    const result = await discoverHosts({
+      allowList: config.subnetAllowList || [],
+      denyList: config.subnetDenyList || []
+    });
+    writeHostDiscovery(result);
+    setProbeState({
+      discoveryInProgress: false,
+      status: "idle",
+      message: `Discovered ${result.hostCount} hosts`,
+      lastDiscovery: new Date().toISOString(),
+      hostsDiscovered: result.hostCount
+    });
+    return result;
+  } catch (err) {
+    setProbeState({ discoveryInProgress: false, status: "error", message: `Discovery failed: ${err.message}` });
+    throw err;
+  }
+}
+
+async function runScan(targets, options = {}) {
+  if (probeState.scanInProgress) {
+    return { results: [], message: "Scan already in progress" };
+  }
+  setProbeState({ scanInProgress: true, status: "scanning", message: `Scanning ${targets.length} host(s)...` });
+  try {
+    const config = getProbeConfig();
+    const portList = options.ports || config.ports || DEFAULT_PORTS;
+    const timeoutMs = options.timeout || config.timeoutMs || 2000;
+    const concurrency = config.concurrency || 10;
+
+    const results = await scanHosts(targets, {
+      ports: portList,
+      timeoutMs,
+      concurrency,
+      hostConcurrency: 3
+    });
+
+    // Persist results keyed by IP
+    const stored = readProbeResults();
+    for (const result of results) {
+      stored.hosts[result.ip] = result;
+    }
+    writeProbeResults(stored);
+
+    // Auto-upsert into device intel
+    const wifiControl = readWifiControl();
+    const wifiSummary = loadJsonDiskFile(WIFI_SUMMARY_FILE, { networks: [] });
+    const enrichedWifi = enrichWifiSummary({ ...wifiSummary, enabled: wifiControl.enabled });
+    const discovery = readHostDiscovery();
+    const wifiCorrelations = correlateWifiHosts(enrichedWifi.networks || [], discovery.hosts || []);
+    const intelItems = probeResultsToIntelItems(results, wifiCorrelations);
+    if (intelItems.length) {
+      upsertDeviceIntelItems(intelItems);
+    }
+
+    setProbeState({
+      scanInProgress: false,
+      status: "idle",
+      message: `Scanned ${results.length} host(s), ${results.reduce((sum, r) => sum + r.openPorts.length, 0)} open ports found`,
+      lastScan: new Date().toISOString(),
+      hostsScanned: results.length
+    });
+
+    return { results, intelItemsCreated: intelItems.length };
+  } catch (err) {
+    setProbeState({ scanInProgress: false, status: "error", message: `Scan failed: ${err.message}` });
+    throw err;
+  }
+}
+
+function syncAutoProbeTimers() {
+  if (autoProbeDiscoverTimer) { clearInterval(autoProbeDiscoverTimer); autoProbeDiscoverTimer = null; }
+  if (autoProbeScanTimer) { clearInterval(autoProbeScanTimer); autoProbeScanTimer = null; }
+
+  const config = getProbeConfig();
+  if (!config.enabled) return;
+
+  if (config.autoDiscover && config.discoverIntervalSec > 0) {
+    const ms = config.discoverIntervalSec * 1000;
+    autoProbeDiscoverTimer = setInterval(() => {
+      runDiscovery().catch((err) => console.error("Auto-discover error:", err.message));
+    }, ms);
+  }
+
+  if (config.autoScan && config.scanIntervalSec > 0) {
+    const ms = config.scanIntervalSec * 1000;
+    autoProbeScanTimer = setInterval(async () => {
+      try {
+        const discovery = readHostDiscovery();
+        if (discovery.hosts && discovery.hosts.length) {
+          await runScan(discovery.hosts);
+        }
+      } catch (err) {
+        console.error("Auto-scan error:", err.message);
+      }
+    }, ms);
+  }
+}
 
 /* -----------------------------
    Shared browser/local listen pipeline
@@ -1008,7 +1189,8 @@ function mergeScanner(current, incoming) {
     ...incoming,
     survey: { ...current.survey, ...(incoming.survey || {}) },
     track: { ...current.track, ...(incoming.track || {}) },
-    listen: { ...current.listen, ...(incoming.listen || {}) }
+    listen: { ...current.listen, ...(incoming.listen || {}) },
+    probe: { ...(current.probe || {}), ...(incoming.probe || {}) }
   });
 }
 
@@ -1381,13 +1563,170 @@ const webServer = http.createServer(async (req, res) => {
     return sendJson(res, { ok: true, control });
   }
 
+  /* --- Network Probe APIs --- */
+
+  if (req.method === "GET" && parsed.pathname === "/api/probe/status") {
+    return sendJson(res, {
+      ok: true,
+      probe: probeState,
+      config: getProbeConfig(),
+      discovery: readHostDiscovery(),
+      resultCount: Object.keys(readProbeResults().hosts || {}).length
+    });
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/probe/discover") {
+    try {
+      const result = await runDiscovery();
+      return sendJson(res, { ok: true, discovery: result });
+    } catch (err) {
+      return sendJson(res, { ok: false, error: err.message }, 500);
+    }
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/probe/scan") {
+    try {
+      const incoming = JSON.parse((await collectRequestBody(req)) || "{}");
+      const target = incoming.target;
+      const ports = Array.isArray(incoming.ports) ? incoming.ports : null;
+      const timeout = incoming.timeout || null;
+
+      let targets;
+      if (target === "all" || !target) {
+        const discovery = readHostDiscovery();
+        targets = discovery.hosts || [];
+        if (!targets.length) {
+          return sendJson(res, { ok: false, error: "No discovered hosts. Run discovery first." }, 400);
+        }
+      } else {
+        // Validate target looks like an IP
+        if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(target)) {
+          return sendJson(res, { ok: false, error: "Invalid IP address format" }, 400);
+        }
+        const discovery = readHostDiscovery();
+        const known = (discovery.hosts || []).find((h) => h.ip === target);
+        targets = [{ ip: target, mac: known?.mac || null, hostname: known?.hostname || null }];
+      }
+
+      const result = await runScan(targets, { ports, timeout });
+      return sendJson(res, { ok: true, ...result });
+    } catch (err) {
+      return sendJson(res, { ok: false, error: err.message }, 500);
+    }
+  }
+
+  if (req.method === "GET" && parsed.pathname === "/api/probe/results") {
+    const stored = readProbeResults();
+    const hosts = stored.hosts || {};
+    return sendJson(res, {
+      ok: true,
+      updatedAt: stored.updatedAt,
+      count: Object.keys(hosts).length,
+      hosts
+    });
+  }
+
+  if (req.method === "GET" && parsed.pathname.startsWith("/api/probe/results/")) {
+    const ip = parsed.pathname.replace("/api/probe/results/", "").trim();
+    if (!ip) return sendJson(res, { ok: false, error: "Missing IP" }, 400);
+    const stored = readProbeResults();
+    const result = (stored.hosts || {})[ip];
+    if (!result) return sendJson(res, { ok: false, error: "No results for that IP" }, 404);
+    return sendJson(res, { ok: true, result });
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/probe/auto") {
+    try {
+      const incoming = JSON.parse((await collectRequestBody(req)) || "{}");
+      const probeConfig = getProbeConfig();
+
+      if (typeof incoming.enabled === "boolean") probeConfig.enabled = incoming.enabled;
+      if (typeof incoming.autoDiscover === "boolean") probeConfig.autoDiscover = incoming.autoDiscover;
+      if (typeof incoming.autoScan === "boolean") probeConfig.autoScan = incoming.autoScan;
+      if (Number.isFinite(incoming.discoverIntervalSec)) probeConfig.discoverIntervalSec = incoming.discoverIntervalSec;
+      if (Number.isFinite(incoming.scanIntervalSec)) probeConfig.scanIntervalSec = incoming.scanIntervalSec;
+
+      currentScanner = { ...currentScanner, probe: probeConfig };
+      saveJsonFile(SCANNER_FILE, currentScanner);
+      syncAutoProbeTimers();
+
+      return sendJson(res, { ok: true, config: probeConfig });
+    } catch (err) {
+      return sendJson(res, { ok: false, error: err.message }, 400);
+    }
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/probe/config") {
+    try {
+      const incoming = JSON.parse((await collectRequestBody(req)) || "{}");
+      const probeConfig = getProbeConfig();
+
+      if (Array.isArray(incoming.ports)) probeConfig.ports = incoming.ports.filter((p) => Number.isFinite(p) && p > 0 && p <= 65535);
+      if (Number.isFinite(incoming.timeoutMs)) probeConfig.timeoutMs = Math.max(500, Math.min(incoming.timeoutMs, 30000));
+      if (Number.isFinite(incoming.concurrency)) probeConfig.concurrency = Math.max(1, Math.min(incoming.concurrency, 50));
+      if (Array.isArray(incoming.subnetAllowList)) probeConfig.subnetAllowList = incoming.subnetAllowList;
+      if (Array.isArray(incoming.subnetDenyList)) probeConfig.subnetDenyList = incoming.subnetDenyList;
+
+      currentScanner = { ...currentScanner, probe: probeConfig };
+      saveJsonFile(SCANNER_FILE, currentScanner);
+
+      return sendJson(res, { ok: true, config: probeConfig });
+    } catch (err) {
+      return sendJson(res, { ok: false, error: err.message }, 400);
+    }
+  }
+
   if (req.method === "GET" && parsed.pathname === "/api/intel") {
     const store = readDeviceIntelStore();
     return sendJson(res, {
       ok: true,
       updatedAt: store.updatedAt,
       items: store.items,
+      store,
       summary: summarizeDeviceIntelStore(store)
+    });
+  }
+
+  if (req.method === "GET" && parsed.pathname === "/api/fusion") {
+    const bleControl = readBleControl();
+    const wifiControl = readWifiControl();
+
+    const bleSummary = enrichBleSummary({
+      ...loadJsonDiskFile(BLE_SUMMARY_FILE, {
+        status: bleControl.enabled ? "running" : "paused",
+        enabled: bleControl.enabled,
+        total_unique_seen: 0,
+        active_unique_seen: 0,
+        total_events: 0,
+        strongest_active: null,
+        devices: []
+      }),
+      enabled: bleControl.enabled
+    });
+
+    const wifiSummary = enrichWifiSummary({
+      ...loadJsonDiskFile(WIFI_SUMMARY_FILE, {
+        status: wifiControl.enabled ? "running" : "paused",
+        enabled: wifiControl.enabled,
+        total_unique_seen: 0,
+        active_unique_seen: 0,
+        total_events: 0,
+        strongest_active: null,
+        networks: []
+      }),
+      enabled: wifiControl.enabled
+    });
+
+    const intelStore = readDeviceIntelStore();
+    const fusion = buildIntelFusion({
+      wifiSummary,
+      bleSummary,
+      intelStore
+    });
+
+    return sendJson(res, {
+      ok: true,
+      fusion
     });
   }
 
@@ -1497,6 +1836,7 @@ const webServer = http.createServer(async (req, res) => {
 
 webServer.listen(PORT, HOST, () => {
   console.log(`RF viewer v2 running on http://${HOST}:${PORT}`);
+  syncAutoProbeTimers();
 });
 
 const tcpServer = net.createServer((socket) => {

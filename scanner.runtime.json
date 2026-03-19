@@ -23,17 +23,5 @@
     "modulation": "fm",
     "gain": 30,
     "squelch": 0
-  },
-  "probe": {
-    "enabled": false,
-    "autoDiscover": false,
-    "discoverIntervalSec": 300,
-    "autoScan": false,
-    "scanIntervalSec": 600,
-    "ports": [21, 22, 23, 80, 443, 554, 1883, 3000, 3306, 5432, 6379, 8080, 8443, 8554, 8883, 9090, 27017],
-    "timeoutMs": 2000,
-    "concurrency": 10,
-    "subnetAllowList": [],
-    "subnetDenyList": []
   }
 }
