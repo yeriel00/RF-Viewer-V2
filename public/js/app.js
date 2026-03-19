@@ -173,6 +173,9 @@ let wifiScrolling = false;
 let wifiScrollTimeout = null;
 let pendingBleRender = null;
 let pendingWifiRender = null;
+/* Content-hash cache — skip innerHTML when nothing changed */
+let lastBleTableHtml = "";
+let lastWifiTableHtml = "";
 let fusionTimer = null;
 
 let currentTrace = [];
@@ -2639,15 +2642,15 @@ function renderBleData(status, summaryData) {
   }
 
   if (!rememberedEntries.length) {
-    bleDevicesBody.innerHTML = `
-      <tr>
-        <td colspan="9" class="muted">No BLE devices captured yet.</td>
-      </tr>
-    `;
+    const emptyHtml = '<tr><td colspan="9" class="muted">No BLE devices captured yet.</td></tr>';
+    if (lastBleTableHtml !== emptyHtml) {
+      bleDevicesBody.innerHTML = emptyHtml;
+      lastBleTableHtml = emptyHtml;
+    }
     return;
   }
 
-  bleDevicesBody.innerHTML = rememberedEntries.map((entry) => {
+  const newHtml = rememberedEntries.map((entry) => {
     const match = entry.match || {};
     const confidence = match.confidence || "none";
     const matched = Boolean(match.matched);
@@ -2720,6 +2723,10 @@ function renderBleData(status, summaryData) {
       </tr>
     `;
   }).join("");
+  if (newHtml !== lastBleTableHtml) {
+    bleDevicesBody.innerHTML = newHtml;
+    lastBleTableHtml = newHtml;
+  }
 }
 
 async function loadBleData() {
@@ -2822,15 +2829,15 @@ function renderWifiData(status, summaryData) {
   }
 
   if (!rememberedEntries.length) {
-    wifiNetworksBody.innerHTML = `
-      <tr>
-        <td colspan="9" class="muted">No Wi-Fi networks captured yet.</td>
-      </tr>
-    `;
+    const emptyHtml = '<tr><td colspan="9" class="muted">No Wi-Fi networks captured yet.</td></tr>';
+    if (lastWifiTableHtml !== emptyHtml) {
+      wifiNetworksBody.innerHTML = emptyHtml;
+      lastWifiTableHtml = emptyHtml;
+    }
     return;
   }
 
-  wifiNetworksBody.innerHTML = rememberedEntries.map((entry) => {
+  const newHtml = rememberedEntries.map((entry) => {
     const match = entry.match || {};
     const confidence = match.confidence || "none";
     const matched = Boolean(match.matched);
@@ -2893,6 +2900,10 @@ function renderWifiData(status, summaryData) {
       </tr>
     `;
   }).join("");
+  if (newHtml !== lastWifiTableHtml) {
+    wifiNetworksBody.innerHTML = newHtml;
+    lastWifiTableHtml = newHtml;
+  }
 }
 
 async function loadWifiData() {
@@ -2937,6 +2948,7 @@ function clearBleMemory() {
   if (lastBleStatus || lastBleSummary) {
     renderBleData(lastBleStatus || {}, lastBleSummary || { devices: [] });
   } else if (bleDevicesBody) {
+    lastBleTableHtml = "";
     bleDevicesBody.innerHTML = `<tr><td colspan="9" class="muted">No BLE devices captured yet.</td></tr>`;
   }
 }
@@ -2948,6 +2960,7 @@ function clearWifiMemory() {
   if (lastWifiStatus || lastWifiSummary) {
     renderWifiData(lastWifiStatus || {}, lastWifiSummary || { networks: [] });
   } else if (wifiNetworksBody) {
+    lastWifiTableHtml = "";
     wifiNetworksBody.innerHTML = `<tr><td colspan="9" class="muted">No Wi-Fi networks captured yet.</td></tr>`;
   }
 }
