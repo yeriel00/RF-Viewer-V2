@@ -17,6 +17,12 @@ Pi-based RF survey, tracking, listen, BLE, and Wi-Fi field viewer with:
 - row lock / unlock for important BLE and Wi-Fi hits
 - BLE ↔ Wi-Fi related-candidate hints in the UI
 - Network Probe: Shodan-style host discovery, port scanning, banner grabbing, and TLS cert extraction
+- protocol-specific probes (RTSP, MQTT, FTP, HTTP)
+- OS fingerprinting from TCP TTL analysis
+- IoT/camera device classification from banners and port signatures
+- scan diffing — tracks new ports, closed ports, and version changes between scans
+- Shodan-style search/filter bar in the fusion card
+- fusion-integrated probe controls (Probe All / per-cluster)
 - optional Alfa hotspot access for field use
 
 This README assumes you are starting from a cloned repo.
@@ -40,6 +46,13 @@ This README assumes you are starting from a cloned repo.
 - Lock buttons on BLE / Wi-Fi rows so important findings stay pinned to the top
 - BLE ↔ Wi-Fi related-candidate hinting so one side can help annotate the other
 - Network Probe card — discover hosts via ARP, scan TCP ports, grab banners, extract TLS certs
+- Protocol-specific probes: RTSP OPTIONS, MQTT CONNECT, FTP USER, full HTTP GET with body hashing
+- OS fingerprinting — TTL-based heuristic (Linux/Windows/network device)
+- IoT/camera device classification — banner-first vendor detection (Hikvision, Dahua, Amcrest, Axis, etc.) plus port-signature heuristics
+- HTTP response body SHA-256 hashing and page title extraction
+- Scan diffing — tracks port changes between scans (new, closed, version changes)
+- Shodan-style search bar in the fusion card with filter syntax (`port:`, `service:`, `os:`, `title:`, `deviceclass:`, etc.)
+- Fusion-integrated probe controls — Probe All Reachable button and per-cluster probe buttons
 - Probe results flow into device-intel and fusion clusters with exposure class auto-calculation
 - Headless Pi-friendly deployment
 - Optional Alfa hotspot for car or field use
@@ -401,13 +414,30 @@ The Network Probe feature adds Shodan-style host discovery and port scanning to 
 ### Capabilities
 
 - **Host Discovery** — scans the local ARP / neighbor table (`ip neigh` on Linux, `arp -a` on macOS) and correlates discovered MACs with Wi-Fi BSSIDs
-- **TCP Port Scanning** — connect-scan with configurable port list, concurrency, and timeouts
-- **Banner Grabbing** — reads service banners from open ports (SSH, FTP, SMTP, HTTP, Redis, MySQL, MongoDB, RTSP, etc.)
+- **TCP Port Scanning** — connect-scan with configurable port list (45+ ports including IoT), concurrency, and timeouts
+- **Banner Grabbing** — reads service banners from open ports (SSH, FTP, SMTP, HTTP, Redis, MySQL, MongoDB, RTSP, MQTT, etc.)
+- **Protocol-Specific Probes** — sends the right protocol greeting per port type:
+  - **RTSP** (554, 8554): Sends `OPTIONS` request, parses supported methods
+  - **MQTT** (1883, 8883): Sends `CONNECT` packet, parses CONNACK response code
+  - **FTP** (21): Sends `USER anonymous` after banner to identify anonymous access
+  - **HTTP** (80, 443, 8080, + 12 more): Sends full `GET /` request, extracts page title and SHA-256 body hash
 - **TLS Certificate Extraction** — grabs subject, issuer, SANs, and expiry from TLS-enabled ports
-- **Service Identification** — pattern-matches banners to identify software versions
+- **Service Identification** — pattern-matches banners to identify 30+ software signatures
+- **OS Fingerprinting** — TTL-based heuristic from TCP connections:
+  - TTL ≤ 64: Linux / Unix
+  - TTL ≤ 128: Windows
+  - TTL ≤ 255: Network device / embedded
+- **Device Classification** — identifies IoT/camera devices:
+  - Banner-first vendor detection: Hikvision, Dahua, Amcrest, Axis, Reolink, Ubiquiti, TP-Link, Wyze, Ring, Nest, etc.
+  - Port-signature heuristics: RTSP + HTTP = ip-camera, MQTT + HTTP = iot-device, CWMP = iot-device, etc.
+- **Scan Diffing** — compares current scan against previous results per host:
+  - New ports opened since last scan
+  - Previously open ports that are now closed
+  - Service version changes (with before/after values)
+  - Previous scan timestamp for tracking change velocity
 - **Exposure Classification** — auto-calculates E0–E4 exposure class based on open services:
   - **E4**: Unauthenticated database ports (MySQL, Postgres, MongoDB, Redis)
-  - **E3**: Management services (SSH, Telnet, RTSP)
+  - **E3**: Management services (SSH, Telnet, RTSP) and IoT ports (CWMP, ADB, Dahua DVR)
   - **E2**: Web services (HTTP)
   - **E1**: Encrypted-only services
   - **E0**: No open ports
@@ -421,8 +451,46 @@ The Network Probe feature adds Shodan-style host discovery and port scanning to 
 | POST | `/api/probe/scan` | Scan hosts — body: `{target: "all"\|"<ip>", ports?, timeout?}` |
 | GET | `/api/probe/results` | All scan results keyed by IP |
 | GET | `/api/probe/results/:ip` | Single host scan result |
+| GET | `/api/probe/search?q=` | Shodan-style search across all probe results (see Search Filters below) |
+| POST | `/api/probe/cluster` | Probe fusion clusters — body: `{clusterIds: [...]\|"all"}` |
 | POST | `/api/probe/auto` | Toggle auto-probe settings |
 | POST | `/api/probe/config` | Update port list, timeouts, concurrency, subnet lists |
+
+### Search Filters
+
+The `/api/probe/search` endpoint and the fusion card search bar support Shodan-style filter syntax. Combine multiple filters and free text in a single query:
+
+```text
+port:80 service:http
+os:linux deviceclass:ip-camera
+title:login product:Hikvision
+banner:OpenSSH
+ip:192.168.1 mac:aa:bb
+hostname:cam
+```
+
+| Filter | Matches |
+|--------|---------|
+| `port:80` | Hosts with port 80 open |
+| `service:http` | Hosts with HTTP-type services |
+| `product:Hikvision` | Banner or version containing "Hikvision" |
+| `os:linux` | TTL-based OS guess containing "linux" |
+| `title:login` | HTTP page title containing "login" |
+| `banner:OpenSSH` | Raw banner containing "OpenSSH" |
+| `deviceclass:ip-camera` | Classified device type |
+| `ip:192.168.1` | IP address substring match |
+| `mac:aa:bb` | MAC address substring match |
+| `hostname:cam` | Hostname substring match |
+
+Additional client-side filters in the fusion search bar:
+
+| Filter | Matches |
+|--------|---------|
+| `family:samsung` | BLE/Wi-Fi family classification |
+| `exposure:E3` | Exposure class (E0–E4) |
+| `confidence:high` | Fusion confidence level |
+
+Free text (without a `key:` prefix) searches across all fields.
 
 ### Configuration
 
@@ -436,7 +504,7 @@ Probe settings live in `scanner.json` under the `probe` key:
     "discoverIntervalSec": 300,
     "autoScan": false,
     "scanIntervalSec": 600,
-    "ports": [21,22,23,25,53,80,110,143,443,445,554,993,1883,3000,3306,5432,5672,6379,8080,8443,8554,8883,9090,27017],
+    "ports": [21,22,23,25,53,80,81,88,110,143,443,445,548,554,993,1080,1883,1900,3000,3306,4443,5000,5432,5555,5672,6379,7443,7547,8000,8008,8080,8081,8088,8181,8291,8443,8554,8883,8888,9090,9100,10000,27017,37777,49152],
     "timeoutMs": 2000,
     "concurrency": 10,
     "subnetAllowList": [],
@@ -450,17 +518,36 @@ Probe settings live in `scanner.json` under the `probe` key:
 Probe results automatically:
 
 1. Get converted to device-intel items via `probe-to-intel.js` (keyed by MAC when available, IP otherwise)
-2. Flow into the Union-Find fusion engine with a reachability bonus (+15 relation strength)
-3. Appear in fusion cluster detail views with service versions, banners, and TLS cert info
+2. Flow into the Union-Find fusion engine with a reachability bonus (+15 for cameras, +8 for other classified devices)
+3. Appear in fusion cluster detail views with:
+   - Service versions and banners
+   - TLS certificate info (subject, issuer, SANs, expiry)
+   - OS guess badge
+   - Device class and vendor badge (color-coded: red for cameras, orange for IoT, yellow for smart-home)
+   - HTTP page titles
+   - RTSP supported methods
+   - MQTT connection status
+   - Port diff indicators (new ports in red, closed in green, version changes with before/after)
 4. Enrich Wi-Fi network rows with probe summaries (open port count, service list)
+5. Trigger IoT/camera-specific action items in cluster checks:
+   - Camera devices: "Confirm authorized and enrolled in NVR"
+   - IoT devices: "Verify against approved asset inventory"
+
+### Fusion Card Probe Controls
+
+The fusion card includes integrated probe controls:
+
+- **Probe All Reachable** — probes all fusion clusters that have IP-identifiable members
+- **Per-cluster Probe** — probe button on each fusion table row
+- **Probe status badge** — shows scan progress and results inline
 
 ### Files
 
 | File | Purpose |
 |------|---------|
 | `network-discovery.js` | ARP/neighbor table parsing, reverse DNS, OUI vendor lookup, Wi-Fi BSSID correlation |
-| `port-scanner.js` | TCP connect scanning, banner grabbing, TLS cert extraction, service identification |
-| `probe-to-intel.js` | Converts scan results to device-intel format with exposure class auto-calculation |
+| `port-scanner.js` | TCP connect scanning, protocol-specific probes (RTSP/MQTT/FTP/HTTP), banner grabbing, TLS cert extraction, OS fingerprinting, device classification, HTTP body hashing |
+| `probe-to-intel.js` | Converts scan results to device-intel format with exposure class, device class, OS guess, HTTP titles, RTSP methods, MQTT status, and port diff |
 | `data/host-discovery.json` | Persisted host discovery results |
 | `data/probe-results.json` | Persisted port scan results |
 
@@ -947,6 +1034,10 @@ Project files:
 ~/Desktop/rf-viewer-v2/server.js
 ~/Desktop/rf-viewer-v2/ble-matcher.js
 ~/Desktop/rf-viewer-v2/wifi-matcher.js
+~/Desktop/rf-viewer-v2/intel-fusion.js
+~/Desktop/rf-viewer-v2/network-discovery.js
+~/Desktop/rf-viewer-v2/port-scanner.js
+~/Desktop/rf-viewer-v2/probe-to-intel.js
 ~/Desktop/rf-viewer-v2/public/index.html
 ~/Desktop/rf-viewer-v2/public/js/app.js
 ~/Desktop/rf-viewer-v2/scanner/rf-viewer-stream.sh

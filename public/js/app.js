@@ -161,6 +161,14 @@ let diagnosticsTimer = null;
 let bleTimer = null;
 let wifiTimer = null;
 let intelTimer = null;
+
+/* Scroll guards — suppress table rebuilds while user is scrolling */
+let bleScrolling = false;
+let bleScrollTimeout = null;
+let wifiScrolling = false;
+let wifiScrollTimeout = null;
+let pendingBleRender = null;
+let pendingWifiRender = null;
 let fusionTimer = null;
 
 let currentTrace = [];
@@ -2577,6 +2585,12 @@ function renderBleData(status, summaryData) {
 
   if (!bleDevicesBody) return;
 
+  // Defer table rebuild if user is actively scrolling
+  if (bleScrolling) {
+    pendingBleRender = () => renderBleData(status, summaryData);
+    return;
+  }
+
   if (!rememberedEntries.length) {
     bleDevicesBody.innerHTML = `
       <tr>
@@ -2753,6 +2767,12 @@ function renderWifiData(status, summaryData) {
   }
 
   if (!wifiNetworksBody) return;
+
+  // Defer table rebuild if user is actively scrolling
+  if (wifiScrolling) {
+    pendingWifiRender = () => renderWifiData(status, summaryData);
+    return;
+  }
 
   if (!rememberedEntries.length) {
     wifiNetworksBody.innerHTML = `
@@ -3545,6 +3565,42 @@ window.addEventListener("unhandledrejection", (event) => {
   const msg = event?.reason?.message || String(event.reason || "Unknown async error");
   setUiMessage(`Async error: ${msg}`, "bad");
 });
+
+/* Attach scroll guards to BLE and WiFi table wrappers */
+(function initScrollGuards() {
+  const bleWrap = bleDevicesBody ? bleDevicesBody.closest(".table-wrap") : null;
+  const wifiWrap = wifiNetworksBody ? wifiNetworksBody.closest(".table-wrap") : null;
+
+  if (bleWrap) {
+    bleWrap.addEventListener("scroll", () => {
+      bleScrolling = true;
+      clearTimeout(bleScrollTimeout);
+      bleScrollTimeout = setTimeout(() => {
+        bleScrolling = false;
+        if (pendingBleRender) {
+          const fn = pendingBleRender;
+          pendingBleRender = null;
+          fn();
+        }
+      }, 300);
+    }, { passive: true });
+  }
+
+  if (wifiWrap) {
+    wifiWrap.addEventListener("scroll", () => {
+      wifiScrolling = true;
+      clearTimeout(wifiScrollTimeout);
+      wifiScrollTimeout = setTimeout(() => {
+        wifiScrolling = false;
+        if (pendingWifiRender) {
+          const fn = pendingWifiRender;
+          pendingWifiRender = null;
+          fn();
+        }
+      }, 300);
+    }, { passive: true });
+  }
+})();
 
 Promise.all([loadSettings(), loadScanner(), loadFiles(), loadIntelData(), loadFusionData()]).then(async () => {
   updateTimer();
