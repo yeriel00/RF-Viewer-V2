@@ -2333,6 +2333,7 @@ let fusionSortKey = "score";
 let fusionSortDir = "desc";
 let fusionPage = 0;
 const FUSION_PAGE_SIZE = 20;
+const fusionLockedRows = new Set();
 
 function matchesFusionSearch(cluster, query) {
   if (!query) return true;
@@ -2433,6 +2434,10 @@ function renderFusionData(fusion) {
 
   // Sort
   filtered.sort((a, b) => {
+    // Locked rows always float to the top
+    const aLocked = fusionLockedRows.has(a.clusterId) ? 1 : 0;
+    const bLocked = fusionLockedRows.has(b.clusterId) ? 1 : 0;
+    if (aLocked !== bLocked) return bLocked - aLocked;
     let cmp = 0;
     if (fusionSortKey === "score") {
       cmp = (a.score ?? 0) - (b.score ?? 0);
@@ -2452,7 +2457,7 @@ function renderFusionData(fusion) {
   if (activeHeader) activeHeader.classList.add(fusionSortDir);
 
   if (!filtered.length) {
-    fusionClustersBody.innerHTML = `<tr><td colspan="7" class="muted">${fusionSearchQuery ? "No clusters match your search." : "No correlated device clusters yet."}</td></tr>`;
+    fusionClustersBody.innerHTML = `<tr><td colspan="8" class="muted">${fusionSearchQuery ? "No clusters match your search." : "No correlated device clusters yet."}</td></tr>`;
     if (fusionPagination) fusionPagination.style.display = "none";
     return;
   }
@@ -2476,6 +2481,7 @@ function renderFusionData(fusion) {
   }
 
   fusionClustersBody.innerHTML = pageSlice.map((cluster) => {
+    const isLocked = fusionLockedRows.has(cluster.clusterId);
     const modalities = [];
     if (cluster.modalityCounts?.wifi) modalities.push(`Wi-Fi ${cluster.modalityCounts.wifi}`);
     if (cluster.modalityCounts?.ble) modalities.push(`BLE ${cluster.modalityCounts.ble}`);
@@ -2523,7 +2529,8 @@ function renderFusionData(fusion) {
     }
 
     return `
-      <tr data-fusion-detail="${escapeHtml(cluster.clusterId)}">
+      <tr data-fusion-detail="${escapeHtml(cluster.clusterId)}"${isLocked ? ' class="fusion-row-locked"' : ''}>
+        <td class="fusion-lock-cell"><button class="fusion-lock-btn${isLocked ? ' locked' : ''}" data-lock-id="${escapeHtml(cluster.clusterId)}" title="${isLocked ? 'Unpin row' : 'Pin to top'}">${isLocked ? '\uD83D\uDD12' : '\uD83D\uDD13'}</button></td>
         <td>
           <div>${escapeHtml(cluster.label || cluster.clusterId)} ${deviceBadge} ${osBadge}</div>
           <div class="wifi-sub">${escapeHtml(cluster.family || "unknown")} \u2022 ${escapeHtml((cluster.confidence || "none").toUpperCase())} \u2022 <span style="color:${expColor}">${escapeHtml(expClass)}</span></div>
@@ -2582,6 +2589,12 @@ function renderBleData(status, summaryData) {
   lastBleStatus = status || null;
   lastBleSummary = summaryData || null;
 
+  // Defer entire render (badges + table) while user is scrolling
+  if (bleScrolling) {
+    pendingBleRender = () => renderBleData(status, summaryData);
+    return;
+  }
+
   mergeBleMemory(summaryData);
   recomputeRelatedLinks();
 
@@ -2634,12 +2647,6 @@ function renderBleData(status, summaryData) {
   }
 
   if (!bleDevicesBody) return;
-
-  // Defer table rebuild if user is actively scrolling
-  if (bleScrolling) {
-    pendingBleRender = () => renderBleData(status, summaryData);
-    return;
-  }
 
   if (!rememberedEntries.length) {
     const emptyHtml = '<tr><td colspan="9" class="muted">No BLE devices captured yet.</td></tr>';
@@ -2770,6 +2777,12 @@ function renderWifiData(status, summaryData) {
   lastWifiStatus = status || null;
   lastWifiSummary = summaryData || null;
 
+  // Defer entire render (badges + table) while user is scrolling
+  if (wifiScrolling) {
+    pendingWifiRender = () => renderWifiData(status, summaryData);
+    return;
+  }
+
   mergeWifiMemory(summaryData);
   recomputeRelatedLinks();
 
@@ -2821,12 +2834,6 @@ function renderWifiData(status, summaryData) {
   }
 
   if (!wifiNetworksBody) return;
-
-  // Defer table rebuild if user is actively scrolling
-  if (wifiScrolling) {
-    pendingWifiRender = () => renderWifiData(status, summaryData);
-    return;
-  }
 
   if (!rememberedEntries.length) {
     const emptyHtml = '<tr><td colspan="9" class="muted">No Wi-Fi networks captured yet.</td></tr>';
@@ -3556,6 +3563,15 @@ if (wifiNetworksBody) {
 
 if (fusionClustersBody) {
   fusionClustersBody.addEventListener("click", (event) => {
+    const lockBtn = event.target.closest(".fusion-lock-btn");
+    if (lockBtn) {
+      event.stopPropagation();
+      const cid = lockBtn.dataset.lockId;
+      if (fusionLockedRows.has(cid)) fusionLockedRows.delete(cid);
+      else fusionLockedRows.add(cid);
+      renderFusionData(currentFusion);
+      return;
+    }
     const row = event.target.closest("[data-fusion-detail]");
     if (row) {
       openFusionDetail(row.getAttribute("data-fusion-detail"));

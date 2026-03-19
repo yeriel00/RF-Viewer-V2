@@ -571,6 +571,13 @@
     .fusion-confirm-box .btn-row { display:flex; gap:10px; justify-content:center; }
     .fusion-confirm-box button { padding:6px 18px; font-size:13px; border-radius:4px; cursor:pointer; }
 
+    .fusion-lock-cell { width: 28px; text-align: center; padding: 2px 4px !important; }
+    .fusion-lock-btn { background: none; border: none; cursor: pointer; font-size: 14px; padding: 0; line-height: 1; opacity: 0.4; transition: opacity .15s; }
+    .fusion-lock-btn:hover { opacity: 1; }
+    .fusion-lock-btn.locked { opacity: 1; }
+    .fusion-row-locked { background: rgba(96, 165, 250, 0.08); }
+    .fusion-row-locked td { border-bottom-color: rgba(96, 165, 250, 0.25); }
+
     @media (max-width: 1024px) {
       .card.w-3,
       .card.w-4,
@@ -1143,6 +1150,7 @@
             <table>
               <thead>
                 <tr>
+                  <th style="width:28px;"></th>
                   <th class="fusion-sortable" data-sort="cluster">Cluster <span class="sort-arrow"></span></th>
                   <th class="fusion-sortable" data-sort="score">Score <span class="sort-arrow"></span></th>
                   <th>Modalities</th>
@@ -1153,7 +1161,7 @@
                 </tr>
               </thead>
               <tbody id="fusionClustersBody">
-                <tr><td colspan="7" class="muted">Loading correlated device intel...</td></tr>
+                <tr><td colspan="8" class="muted">Loading correlated device intel...</td></tr>
               </tbody>
             </table>
           </div>
