@@ -409,7 +409,9 @@ function getProbeConfig() {
     timeoutMs: 2000,
     concurrency: 10,
     subnetAllowList: [],
-    subnetDenyList: []
+    subnetDenyList: [],
+    skipDns: false,
+    dnsTimeoutMs: 1500
   };
 }
 
@@ -422,7 +424,9 @@ async function runDiscovery() {
     const config = getProbeConfig();
     const result = await discoverHosts({
       allowList: config.subnetAllowList || [],
-      denyList: config.subnetDenyList || []
+      denyList: config.subnetDenyList || [],
+      skipDns: !!config.skipDns,
+      dnsTimeoutMs: config.dnsTimeoutMs || 1500
     });
     writeHostDiscovery(result);
     setProbeState({
@@ -500,6 +504,7 @@ function syncAutoProbeTimers() {
   if (config.autoDiscover && config.discoverIntervalSec > 0) {
     const ms = config.discoverIntervalSec * 1000;
     autoProbeDiscoverTimer = setInterval(() => {
+      if (probeState.discoveryInProgress) return;
       runDiscovery().catch((err) => console.error("Auto-discover error:", err.message));
     }, ms);
   }
@@ -507,6 +512,7 @@ function syncAutoProbeTimers() {
   if (config.autoScan && config.scanIntervalSec > 0) {
     const ms = config.scanIntervalSec * 1000;
     autoProbeScanTimer = setInterval(async () => {
+      if (probeState.scanInProgress) return;
       try {
         const discovery = readHostDiscovery();
         if (discovery.hosts && discovery.hosts.length) {

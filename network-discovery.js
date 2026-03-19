@@ -54,7 +54,8 @@ function getLocalSubnets() {
   const ifaces = os.networkInterfaces();
 
   for (const [name, addrs] of Object.entries(ifaces)) {
-    if (/^(lo|docker|br-|veth|virbr)/.test(name)) continue;
+    // Skip loopback, containers, and common AP / hotspot virtual interfaces
+    if (/^(lo|docker|br-|veth|virbr|uap|ap\d)/.test(name)) continue;
     for (const addr of addrs) {
       if (addr.family !== "IPv4" || addr.internal) continue;
       const cidr = addr.cidr || `${addr.address}/24`;
@@ -154,11 +155,22 @@ function parseArpA(stdout) {
 
 /**
  * Try reverse DNS lookup for a host.
+ * Uses a short timeout so offline / no-DNS environments don't stall discovery.
  */
-function reverseDns(ip) {
+function reverseDns(ip, timeoutMs) {
+  if (timeoutMs === 0) return Promise.resolve(null);
+  const limit = typeof timeoutMs === "number" ? timeoutMs : 1500;
   return new Promise((resolve) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      if (!done) { done = true; resolve(null); }
+    }, limit);
     dns.reverse(ip, (err, hostnames) => {
-      resolve(err ? null : (hostnames && hostnames[0]) || null);
+      if (!done) {
+        done = true;
+        clearTimeout(timer);
+        resolve(err ? null : (hostnames && hostnames[0]) || null);
+      }
     });
   });
 }
@@ -192,7 +204,7 @@ async function getArpHosts() {
  * Returns: { subnets, hosts: [{ip, mac, hostname, vendor, firstSeen, lastSeen, source}] }
  */
 async function discoverHosts(options = {}) {
-  const { allowList = [], denyList = [] } = options;
+  const { allowList = [], denyList = [], dnsTimeoutMs = 1500, skipDns = false } = options;
   const subnets = getLocalSubnets();
   const arpHosts = await getArpHosts();
 
@@ -213,7 +225,7 @@ async function discoverHosts(options = {}) {
     const batch = hosts.slice(i, i + batchSize);
     const lookups = batch.map(async (host) => {
       host.vendor = host.mac ? vendorFromOui(host.mac) : "Unknown";
-      host.hostname = await reverseDns(host.ip);
+      host.hostname = skipDns ? null : await reverseDns(host.ip, dnsTimeoutMs);
       host.firstSeen = new Date().toISOString();
       host.lastSeen = new Date().toISOString();
     });

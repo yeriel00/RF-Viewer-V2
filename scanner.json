@@ -34,6 +34,8 @@
     "timeoutMs": 2000,
     "concurrency": 10,
     "subnetAllowList": [],
-    "subnetDenyList": []
+    "skipDns": true,
+    "subnetDenyList": ["10.42.0.0/24"],
+    "dnsTimeoutMs": 1500
   }
 }
