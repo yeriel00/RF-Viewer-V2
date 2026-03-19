@@ -93,6 +93,26 @@ const intelReachableBadge = document.getElementById("intelReachableBadge");
 const intelExposureBadge = document.getElementById("intelExposureBadge");
 const intelStatusText = document.getElementById("intelStatusText");
 const intelUpdatedText = document.getElementById("intelUpdatedText");
+const fusionStateBadge = document.getElementById("fusionStateBadge");
+const fusionClustersBadge = document.getElementById("fusionClustersBadge");
+const fusionMultiSignalBadge = document.getElementById("fusionMultiSignalBadge");
+const fusionIntelCoverageBadge = document.getElementById("fusionIntelCoverageBadge");
+const fusionConfidenceBadge = document.getElementById("fusionConfidenceBadge");
+const fusionStatusText = document.getElementById("fusionStatusText");
+const fusionClustersBody = document.getElementById("fusionClustersBody");
+
+const probeDiscoverBtn = document.getElementById("probeDiscoverBtn");
+const probeScanAllBtn = document.getElementById("probeScanAllBtn");
+const probeStateBadge = document.getElementById("probeStateBadge");
+const probeHostsBadge = document.getElementById("probeHostsBadge");
+const probePortsBadge = document.getElementById("probePortsBadge");
+const probeLastDiscoveryBadge = document.getElementById("probeLastDiscoveryBadge");
+const probeLastScanBadge = document.getElementById("probeLastScanBadge");
+const probeAutoToggle = document.getElementById("probeAutoToggle");
+const probeAutoDiscoverToggle = document.getElementById("probeAutoDiscoverToggle");
+const probeAutoScanToggle = document.getElementById("probeAutoScanToggle");
+const probeStatusText = document.getElementById("probeStatusText");
+const probeHostsBody = document.getElementById("probeHostsBody");
 
 const proximityEnabled = document.getElementById("proximityEnabled");
 const audioEnabled = document.getElementById("audioEnabled");
@@ -135,6 +155,7 @@ let diagnosticsTimer = null;
 let bleTimer = null;
 let wifiTimer = null;
 let intelTimer = null;
+let fusionTimer = null;
 
 let currentTrace = [];
 let currentSettings = null;
@@ -161,6 +182,9 @@ let lastBleSummary = null;
 let lastWifiStatus = null;
 let lastWifiSummary = null;
 let currentIntel = { items: [], summary: null, byKey: {} };
+let currentFusion = { clusters: [], summary: null, updatedAt: null };
+let currentProbe = { status: null, discovery: null, results: null };
+let probeTimer = null;
 let selectedDetail = null;
 
 let bleMemory = loadMemoryStore(BLE_MEMORY_KEY);
@@ -1720,6 +1744,7 @@ function exportSessionBundle() {
       memory: wifiMemory
     },
     intel: currentIntel,
+    fusion: currentFusion,
     selectedDetail
   };
 
@@ -1863,7 +1888,11 @@ async function loadListenDiagnostics() {
 async function loadIntelData() {
   try {
     const data = await fetchJson("/api/intel");
-    const items = Array.isArray(data?.store?.items) ? data.store.items : [];
+    const items = Array.isArray(data?.items)
+      ? data.items
+      : Array.isArray(data?.store?.items)
+        ? data.store.items
+        : [];
     currentIntel = {
       items,
       summary: data.summary || null,
@@ -1898,6 +1927,439 @@ function updateIntelTimer() {
   if (intelTimer) clearInterval(intelTimer);
   intelTimer = null;
   intelTimer = setInterval(loadIntelData, 5000);
+}
+
+function buildFusionDetailHtml(cluster) {
+  if (!cluster) {
+    return `<div class="detail-block"><h4>Fusion cluster</h4><div>No cluster data available.</div></div>`;
+  }
+
+  const modalities = [];
+  if (cluster.modalityCounts?.wifi) modalities.push(`Wi-Fi ${cluster.modalityCounts.wifi}`);
+  if (cluster.modalityCounts?.ble) modalities.push(`BLE ${cluster.modalityCounts.ble}`);
+  if (cluster.modalityCounts?.intel) modalities.push(`Intel ${cluster.modalityCounts.intel}`);
+
+  const relations = Array.isArray(cluster.relations) ? cluster.relations : [];
+  const relationLines = relations.length
+    ? relations.map((relation) => `<div><strong>${escapeHtml(relation.left || "left")}</strong> ↔ <strong>${escapeHtml(relation.right || "right")}</strong> — ${escapeHtml((relation.reasons || []).join(" • ") || "linked")}</div>`).join("")
+    : `<div>No explicit pairwise relations were retained.</div>`;
+
+  return `
+    <div class="detail-grid">
+      <div class="detail-block">
+        <h4>Overview</h4>
+        <div><strong>Label:</strong> ${escapeHtml(cluster.label || "--")}</div>
+        <div><strong>Family:</strong> ${escapeHtml(cluster.family || "--")}</div>
+        <div><strong>Confidence:</strong> ${escapeHtml(cluster.confidence || "none")}</div>
+        <div><strong>Score:</strong> ${escapeHtml(String(cluster.score ?? 0))}</div>
+        <div><strong>Modalities:</strong> ${escapeHtml(modalities.join(" + ") || "--")}</div>
+      </div>
+
+      <div class="detail-block">
+        <h4>Summary</h4>
+        <div>${escapeHtml(cluster.summary || "--")}</div>
+        <div style="margin-top:8px;"><strong>Primary proximity:</strong> ${escapeHtml(cluster.primaryProximity || "--")}</div>
+        <div><strong>Exposure:</strong> ${escapeHtml(cluster.maxExposure || "E0")}</div>
+        <div><strong>Reachable:</strong> ${escapeHtml(cluster.reachable == null ? "unknown" : String(cluster.reachable))}</div>
+        <div><strong>Surfaces:</strong> ${escapeHtml(cluster.surfaceSummary || "--")}</div>
+      </div>
+
+      <div class="detail-block">
+        <h4>Identifiers</h4>
+        <div><strong>Wi-Fi:</strong> ${escapeHtml((cluster.identifiers?.wifi || []).join(" • ") || "--")}</div>
+        <div><strong>BLE:</strong> ${escapeHtml((cluster.identifiers?.ble || []).join(" • ") || "--")}</div>
+        <div><strong>Intel:</strong> ${escapeHtml((cluster.identifiers?.intel || []).join(" • ") || "--")}</div>
+      </div>
+
+      <div class="detail-block">
+        <h4>Evidence</h4>
+        <div>${escapeHtml((cluster.evidence || []).join(" • ") || "--")}</div>
+      </div>
+
+      <div class="detail-block">
+        <h4>Authorized checks</h4>
+        <div>${escapeHtml((cluster.authorizedChecks || []).join(" • ") || "--")}</div>
+      </div>
+
+      <div class="detail-block">
+        <h4>Relations</h4>
+        ${relationLines}
+      </div>
+
+      ${cluster.probeData?.hasProbeData ? `
+      <div class="detail-block">
+        <h4>Probe Data</h4>
+        ${(cluster.probeData.services || []).length ? `<div><strong>Services:</strong> ${escapeHtml(cluster.probeData.services.map((s) => `${s.port}/${s.version || "open"}`).join(", "))}</div>` : ""}
+        ${(cluster.probeData.bannerSnippets || []).length ? `<div style="margin-top:4px;"><strong>Banners:</strong></div>${cluster.probeData.bannerSnippets.map((b) => `<div class="wifi-sub">${escapeHtml(b.port + ": " + b.snippet)}</div>`).join("")}` : ""}
+        ${(cluster.probeData.tlsCerts || []).length ? `<div style="margin-top:4px;"><strong>TLS Certificates:</strong></div>${cluster.probeData.tlsCerts.map((c) => `<div class="wifi-sub">${escapeHtml(c)}</div>`).join("")}` : ""}
+      </div>
+      ` : ""}
+
+      <div class="detail-block">
+        <h4>Raw cluster</h4>
+        <pre>${jsonBlock(cluster)}</pre>
+      </div>
+    </div>
+  `;
+}
+
+/* -------------------------------------------------------
+   Network Probe — Discovery, Scanning, Rendering
+-------------------------------------------------------- */
+
+function renderProbeStatus(data) {
+  if (!data) return;
+
+  const probe = data.probe || {};
+  const discovery = data.discovery || {};
+  const config = data.config || {};
+  const hosts = discovery.hosts || [];
+  const resultCount = data.resultCount || 0;
+
+  currentProbe.status = probe;
+  currentProbe.discovery = discovery;
+
+  if (probeStateBadge) probeStateBadge.textContent = `Probe: ${probe.status || "idle"}`;
+  if (probeHostsBadge) probeHostsBadge.textContent = `Hosts: ${hosts.length}`;
+  if (probeLastDiscoveryBadge) probeLastDiscoveryBadge.textContent = `Last discovery: ${probe.lastDiscovery ? fmtShortTime(probe.lastDiscovery) : "--"}`;
+  if (probeLastScanBadge) probeLastScanBadge.textContent = `Last scan: ${probe.lastScan ? fmtShortTime(probe.lastScan) : "--"}`;
+  if (probeStatusText) probeStatusText.textContent = probe.message || "No probe activity yet.";
+
+  if (probeAutoToggle) probeAutoToggle.checked = !!config.enabled;
+  if (probeAutoDiscoverToggle) probeAutoDiscoverToggle.checked = !!config.autoDiscover;
+  if (probeAutoScanToggle) probeAutoScanToggle.checked = !!config.autoScan;
+}
+
+function renderProbeResults(probeResults) {
+  if (!probeHostsBody) return;
+
+  currentProbe.results = probeResults;
+  const discovery = currentProbe.discovery || {};
+  const discoveredHosts = discovery.hosts || [];
+  const scannedHosts = (probeResults && probeResults.hosts) ? probeResults.hosts : {};
+
+  // Merge discovered hosts with scan results
+  const allIps = new Set([
+    ...discoveredHosts.map((h) => h.ip),
+    ...Object.keys(scannedHosts)
+  ]);
+
+  if (!allIps.size) {
+    probeHostsBody.innerHTML = `<tr><td colspan="9" class="muted">No hosts discovered yet.</td></tr>`;
+    return;
+  }
+
+  let totalOpenPorts = 0;
+  const rows = [];
+
+  for (const ip of allIps) {
+    const discovered = discoveredHosts.find((h) => h.ip === ip) || {};
+    const scanned = scannedHosts[ip] || null;
+    const openPorts = scanned ? scanned.openPorts || [] : [];
+    totalOpenPorts += openPorts.length;
+
+    const mac = discovered.mac || (scanned && scanned.mac) || "--";
+    const hostname = discovered.hostname || (scanned && scanned.hostname) || "--";
+    const vendor = discovered.vendor || "--";
+
+    const portList = openPorts.map((p) => String(p.port)).join(", ") || "--";
+    const serviceList = openPorts
+      .map((p) => p.service ? p.service.toUpperCase() : `${p.port}`)
+      .slice(0, 4)
+      .join(", ") || "--";
+
+    const bannerSnippets = openPorts
+      .filter((p) => p.version || p.banner)
+      .map((p) => p.version || (p.banner ? p.banner.slice(0, 40).replace(/[\r\n]+/g, " ") : ""))
+      .filter(Boolean)
+      .slice(0, 2)
+      .join("; ") || "--";
+
+    const lastScanned = scanned ? fmtShortTime(scanned.scanCompleted || scanned.scanStarted) : "--";
+
+    rows.push(`
+      <tr data-probe-ip="${escapeHtml(ip)}">
+        <td>${escapeHtml(ip)}</td>
+        <td><span class="wifi-sub">${escapeHtml(mac)}</span></td>
+        <td>${escapeHtml(hostname)}</td>
+        <td><span class="wifi-sub">${escapeHtml(vendor)}</span></td>
+        <td>${escapeHtml(portList)}</td>
+        <td>${escapeHtml(serviceList)}</td>
+        <td><span class="wifi-sub">${escapeHtml(bannerSnippets)}</span></td>
+        <td><span class="wifi-sub">${escapeHtml(lastScanned)}</span></td>
+        <td><button class="probe-scan-btn" data-scan-ip="${escapeHtml(ip)}" type="button" style="font-size:11px; padding:2px 8px;">Scan</button></td>
+      </tr>
+    `);
+  }
+
+  if (probePortsBadge) probePortsBadge.textContent = `Open ports: ${totalOpenPorts}`;
+  probeHostsBody.innerHTML = rows.join("");
+}
+
+function buildProbeDetailHtml(ip) {
+  const scanned = currentProbe.results && currentProbe.results.hosts ? currentProbe.results.hosts[ip] : null;
+  const discovered = (currentProbe.discovery?.hosts || []).find((h) => h.ip === ip);
+
+  if (!scanned && !discovered) {
+    return `<div class="detail-block"><h4>Host ${escapeHtml(ip)}</h4><div>No data available.</div></div>`;
+  }
+
+  const openPorts = scanned ? scanned.openPorts || [] : [];
+
+  const portRows = openPorts.map((p) => {
+    const svc = p.service ? p.service.toUpperCase() : "?";
+    const ver = p.version || "--";
+    const banner = p.banner ? escapeHtml(p.banner.slice(0, 200).replace(/[\r\n]+/g, " ")) : "--";
+    const cert = p.tlsCert
+      ? `<div style="margin-top:4px;font-size:11px;"><strong>TLS:</strong> ${escapeHtml(p.tlsCert.subject?.CN || "?")} (issuer: ${escapeHtml(p.tlsCert.issuer?.O || p.tlsCert.issuer?.CN || "?")}, expires: ${escapeHtml(p.tlsCert.validTo || "?")}${p.tlsCert.sans ? `, SANs: ${escapeHtml(p.tlsCert.sans.slice(0, 80))}` : ""})</div>`
+      : "";
+    const headers = p.headers
+      ? `<div style="margin-top:4px;font-size:11px;"><strong>Headers:</strong> ${escapeHtml(Object.entries(p.headers).slice(0, 5).map(([k, v]) => `${k}: ${v}`).join(" | ").slice(0, 200))}</div>`
+      : "";
+
+    return `
+      <div style="padding:6px 0; border-bottom:1px solid var(--line);">
+        <strong>${escapeHtml(String(p.port))}/${svc}</strong> — ${escapeHtml(ver)} <span class="wifi-sub">(${p.responseTimeMs || 0}ms)</span>
+        ${banner !== "--" ? `<div style="margin-top:4px;font-size:11px;color:var(--muted);"><strong>Banner:</strong> ${banner}</div>` : ""}
+        ${cert}
+        ${headers}
+      </div>
+    `;
+  }).join("");
+
+  return `
+    <div class="detail-grid">
+      <div class="detail-block">
+        <h4>Host Info</h4>
+        <div><strong>IP:</strong> ${escapeHtml(ip)}</div>
+        <div><strong>MAC:</strong> ${escapeHtml(discovered?.mac || scanned?.mac || "--")}</div>
+        <div><strong>Hostname:</strong> ${escapeHtml(discovered?.hostname || scanned?.hostname || "--")}</div>
+        <div><strong>Vendor:</strong> ${escapeHtml(discovered?.vendor || "--")}</div>
+        ${scanned ? `<div><strong>Scan duration:</strong> ${scanned.scanDurationMs || 0}ms</div>` : ""}
+        ${scanned ? `<div><strong>Scanned:</strong> ${escapeHtml(scanned.scanCompleted || "--")}</div>` : ""}
+      </div>
+
+      <div class="detail-block">
+        <h4>Open Ports (${openPorts.length})</h4>
+        ${portRows || "<div>No open ports found.</div>"}
+      </div>
+
+      ${scanned ? `<div class="detail-block"><h4>Raw scan result</h4><pre>${jsonBlock(scanned)}</pre></div>` : ""}
+    </div>
+  `;
+}
+
+function openProbeDetail(ip) {
+  if (!ip) return;
+  const discovered = (currentProbe.discovery?.hosts || []).find((h) => h.ip === ip);
+  const meta = discovered ? `${discovered.vendor || "Unknown"} • ${discovered.mac || ""}` : ip;
+  openDetailDrawer(
+    `Host: ${ip}`,
+    meta,
+    buildProbeDetailHtml(ip),
+    { type: "probe", key: ip }
+  );
+}
+
+async function loadProbeStatus() {
+  if (!probeHostsBody && !probeStateBadge) return;
+  try {
+    const data = await fetchJson("/api/probe/status");
+    renderProbeStatus(data);
+  } catch (err) {
+    if (probeStateBadge) probeStateBadge.textContent = "Probe: error";
+    if (probeStatusText) probeStatusText.textContent = `Probe status error: ${err.message}`;
+  }
+}
+
+async function loadProbeResults() {
+  if (!probeHostsBody) return;
+  try {
+    const data = await fetchJson("/api/probe/results");
+    renderProbeResults(data);
+  } catch (_) { /* best effort */ }
+}
+
+async function triggerDiscovery() {
+  if (probeStatusText) probeStatusText.textContent = "Discovering hosts on local network...";
+  if (probeStateBadge) probeStateBadge.textContent = "Probe: discovering";
+  try {
+    const data = await fetchJson("/api/probe/discover", { method: "POST" });
+    if (data.ok) {
+      if (probeStatusText) probeStatusText.textContent = `Discovered ${data.discovery?.hostCount || 0} hosts.`;
+      await loadProbeStatus();
+      await loadProbeResults();
+    } else {
+      if (probeStatusText) probeStatusText.textContent = `Discovery failed: ${data.error || "unknown"}`;
+    }
+  } catch (err) {
+    if (probeStatusText) probeStatusText.textContent = `Discovery error: ${err.message}`;
+  }
+}
+
+async function triggerScan(target) {
+  const label = target === "all" ? "all hosts" : target;
+  if (probeStatusText) probeStatusText.textContent = `Scanning ${label}...`;
+  if (probeStateBadge) probeStateBadge.textContent = "Probe: scanning";
+  try {
+    const body = target === "all" ? { target: "all" } : { target };
+    const data = await fetchJson("/api/probe/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    if (data.ok) {
+      const portCount = (data.results || []).reduce((sum, r) => sum + (r.openPorts || []).length, 0);
+      if (probeStatusText) probeStatusText.textContent = `Scan complete: ${data.results?.length || 0} host(s), ${portCount} open port(s). ${data.intelItemsCreated || 0} intel items created.`;
+      await loadProbeStatus();
+      await loadProbeResults();
+      // Refresh fusion to pick up new intel
+      if (typeof loadFusionData === "function") loadFusionData();
+      if (typeof loadIntelData === "function") loadIntelData();
+    } else {
+      if (probeStatusText) probeStatusText.textContent = `Scan failed: ${data.error || "unknown"}`;
+    }
+  } catch (err) {
+    if (probeStatusText) probeStatusText.textContent = `Scan error: ${err.message}`;
+  }
+}
+
+async function toggleAutoProbe(field, value) {
+  try {
+    const body = {};
+    body[field] = value;
+    if (field === "enabled" && value) {
+      body.autoDiscover = true;
+      body.autoScan = true;
+    }
+    await fetchJson("/api/probe/auto", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    await loadProbeStatus();
+  } catch (err) {
+    if (probeStatusText) probeStatusText.textContent = `Auto-probe toggle error: ${err.message}`;
+  }
+}
+
+function updateProbeTimer() {
+  if (probeTimer) clearInterval(probeTimer);
+  probeTimer = null;
+  if (probeHostsBody || probeStateBadge) {
+    probeTimer = setInterval(async () => {
+      await loadProbeStatus();
+      await loadProbeResults();
+    }, 8000);
+  }
+}
+
+function openFusionDetail(clusterId) {
+  const cluster = (currentFusion.clusters || []).find((item) => item.clusterId === clusterId);
+  if (!cluster) return;
+
+  const meta = `${cluster.family || "unknown"} • ${cluster.confidence || "none"} • score ${cluster.score ?? 0}`;
+  openDetailDrawer(
+    cluster.label || clusterId,
+    meta,
+    buildFusionDetailHtml(cluster),
+    { type: "fusion", key: clusterId }
+  );
+}
+
+function renderFusionData(fusion) {
+  currentFusion = {
+    clusters: Array.isArray(fusion?.clusters) ? fusion.clusters : [],
+    summary: fusion?.summary || null,
+    updatedAt: fusion?.updatedAt || null
+  };
+
+  const summary = currentFusion.summary || {
+    totalClusters: 0,
+    multiSignal: 0,
+    withIntel: 0,
+    highConfidence: 0,
+    mediumConfidence: 0,
+    lowConfidence: 0
+  };
+
+  if (fusionStateBadge) fusionStateBadge.textContent = currentFusion.clusters.length ? "Fusion: ready" : "Fusion: idle";
+  if (fusionClustersBadge) fusionClustersBadge.textContent = `Clusters: ${summary.totalClusters || 0}`;
+  if (fusionMultiSignalBadge) fusionMultiSignalBadge.textContent = `Multi-signal: ${summary.multiSignal || 0}`;
+  if (fusionIntelCoverageBadge) fusionIntelCoverageBadge.textContent = `With intel: ${summary.withIntel || 0}`;
+  if (fusionConfidenceBadge) {
+    fusionConfidenceBadge.textContent = `H/M/L: ${summary.highConfidence || 0}/${summary.mediumConfidence || 0}/${summary.lowConfidence || 0}`;
+  }
+
+  if (fusionStatusText) {
+    fusionStatusText.textContent = currentFusion.clusters.length
+      ? `Correlated summaries refreshed ${fmtShortTime(currentFusion.updatedAt || isoNow())}.`
+      : "No correlated clusters yet. Let the Wi-Fi/BLE collectors gather more signals or add authorized intel.";
+  }
+
+  if (!fusionClustersBody) return;
+
+  if (!currentFusion.clusters.length) {
+    fusionClustersBody.innerHTML = `<tr><td colspan="6" class="muted">No correlated device clusters yet.</td></tr>`;
+    return;
+  }
+
+  fusionClustersBody.innerHTML = currentFusion.clusters.map((cluster) => {
+    const modalities = [];
+    if (cluster.modalityCounts?.wifi) modalities.push(`Wi-Fi ${cluster.modalityCounts.wifi}`);
+    if (cluster.modalityCounts?.ble) modalities.push(`BLE ${cluster.modalityCounts.ble}`);
+    if (cluster.modalityCounts?.intel) modalities.push(`Intel ${cluster.modalityCounts.intel}`);
+
+    // Exposure class color coding
+    const expClass = cluster.maxExposure || "E0";
+    const expColor = expClass === "E4" ? "var(--bad)" : expClass === "E3" ? "#fb923c" : expClass === "E2" ? "var(--warn)" : expClass === "E1" ? "var(--good)" : "var(--muted)";
+
+    // Probe data: show service versions and banners if available
+    let probeHint = "";
+    if (cluster.probeData?.hasProbeData) {
+      const svcList = (cluster.probeData.services || []).slice(0, 3).map((s) => s.version || `${s.port}`).join(", ");
+      if (svcList) probeHint = `<div class="wifi-sub" style="margin-top:2px;">\uD83D\uDD0D ${escapeHtml(svcList)}</div>`;
+    }
+
+    return `
+      <tr data-fusion-detail="${escapeHtml(cluster.clusterId)}">
+        <td>
+          <div>${escapeHtml(cluster.label || cluster.clusterId)}</div>
+          <div class="wifi-sub">${escapeHtml(cluster.family || "unknown")} • ${escapeHtml((cluster.confidence || "none").toUpperCase())} • <span style="color:${expColor}">${escapeHtml(expClass)}</span></div>
+          ${probeHint}
+        </td>
+        <td>${escapeHtml(String(cluster.score ?? 0))}</td>
+        <td>${escapeHtml(modalities.join(" + ") || "--")}</td>
+        <td>${escapeHtml(cluster.summary || "--")}</td>
+        <td>${escapeHtml((cluster.evidence || []).slice(0, 3).join(" • ") || "--")}</td>
+        <td>${escapeHtml((cluster.authorizedChecks || []).slice(0, 2).join(" • ") || "--")}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+async function loadFusionData() {
+  if (!fusionStatusText && !fusionClustersBody) return;
+
+  try {
+    const data = await fetchJson("/api/fusion");
+    renderFusionData(data.fusion || {});
+  } catch (err) {
+    currentFusion = { clusters: [], summary: null, updatedAt: null };
+    if (fusionStateBadge) fusionStateBadge.textContent = "Fusion: error";
+    if (fusionStatusText) fusionStatusText.textContent = `Fusion load failed: ${err.message}`;
+    if (fusionClustersBody) {
+      fusionClustersBody.innerHTML = `<tr><td colspan="6" class="muted">Fusion load failed: ${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+}
+
+function updateFusionTimer() {
+  if (fusionTimer) clearInterval(fusionTimer);
+  fusionTimer = null;
+  if (fusionClustersBody || fusionStatusText) {
+    fusionTimer = setInterval(loadFusionData, 5000);
+  }
 }
 
 function countIntelCoverage(entries = []) {
@@ -2750,6 +3212,25 @@ if (wifiStartBtn) wifiStartBtn.addEventListener("click", startWifiScanner);
 if (wifiStopBtn) wifiStopBtn.addEventListener("click", stopWifiScanner);
 if (wifiClearMemoryBtn) wifiClearMemoryBtn.addEventListener("click", clearWifiMemory);
 if (exportSessionBtn) exportSessionBtn.addEventListener("click", exportSessionBundle);
+if (probeDiscoverBtn) probeDiscoverBtn.addEventListener("click", () => triggerDiscovery());
+if (probeScanAllBtn) probeScanAllBtn.addEventListener("click", () => triggerScan("all"));
+if (probeAutoToggle) probeAutoToggle.addEventListener("change", () => toggleAutoProbe("enabled", probeAutoToggle.checked));
+if (probeAutoDiscoverToggle) probeAutoDiscoverToggle.addEventListener("change", () => toggleAutoProbe("autoDiscover", probeAutoDiscoverToggle.checked));
+if (probeAutoScanToggle) probeAutoScanToggle.addEventListener("change", () => toggleAutoProbe("autoScan", probeAutoScanToggle.checked));
+
+if (probeHostsBody) {
+  probeHostsBody.addEventListener("click", (event) => {
+    const scanBtn = event.target.closest("[data-scan-ip]");
+    if (scanBtn) {
+      triggerScan(scanBtn.getAttribute("data-scan-ip"));
+      return;
+    }
+    const row = event.target.closest("[data-probe-ip]");
+    if (row) {
+      openProbeDetail(row.getAttribute("data-probe-ip"));
+    }
+  });
+}
 
 if (bleDevicesBody) {
   bleDevicesBody.addEventListener("click", (event) => {
@@ -2777,6 +3258,15 @@ if (wifiNetworksBody) {
     const row = event.target.closest("[data-wifi-detail]");
     if (row) {
       openWifiDetail(row.getAttribute("data-wifi-detail"));
+    }
+  });
+}
+
+if (fusionClustersBody) {
+  fusionClustersBody.addEventListener("click", (event) => {
+    const row = event.target.closest("[data-fusion-detail]");
+    if (row) {
+      openFusionDetail(row.getAttribute("data-fusion-detail"));
     }
   });
 }
@@ -2884,16 +3374,21 @@ window.addEventListener("unhandledrejection", (event) => {
   setUiMessage(`Async error: ${msg}`, "bad");
 });
 
-Promise.all([loadSettings(), loadScanner(), loadFiles(), loadIntelData()]).then(async () => {
+Promise.all([loadSettings(), loadScanner(), loadFiles(), loadIntelData(), loadFusionData()]).then(async () => {
   updateTimer();
   updateDiagnosticsTimer();
   updateBleTimer();
   updateWifiTimer();
   updateIntelTimer();
+  updateFusionTimer();
+  updateProbeTimer();
   await refreshRecordStatus();
   await loadListenDiagnostics();
   await loadBleData();
   await loadWifiData();
+  await loadProbeStatus();
+  await loadProbeResults();
+  await loadFusionData();
   updateProximityUI(null);
   updateModeUi();
   setListenStatus("Not listening", "good");

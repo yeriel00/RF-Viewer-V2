@@ -1,0 +1,6 @@
+{
+  "enabled": true,
+  "interface": "wlan0",
+  "interval_seconds": 7,
+  "updated_at": "2026-03-16T06:04:35.377Z"
+}

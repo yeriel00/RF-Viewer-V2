@@ -1070,6 +1070,103 @@
       <section class="card w-12" data-card>
         <div class="card-header" data-collapse-toggle>
           <div class="card-header-left">
+            <h3>Network Probe</h3>
+            <div class="muted">Discover hosts, scan ports, grab banners &amp; TLS certs — auto-feeds into Device Intel</div>
+          </div>
+          <button class="collapse-btn" type="button">−</button>
+        </div>
+        <div class="card-body">
+          <div class="btn-row">
+            <button id="probeDiscoverBtn" type="button">Discover Hosts</button>
+            <button id="probeScanAllBtn" type="button">Scan All Hosts</button>
+          </div>
+
+          <div class="btn-row" style="margin-top:12px;">
+            <span id="probeStateBadge" class="chip">Probe: idle</span>
+            <span id="probeHostsBadge" class="chip">Hosts: 0</span>
+            <span id="probePortsBadge" class="chip">Open ports: 0</span>
+            <span id="probeLastDiscoveryBadge" class="chip">Last discovery: --</span>
+            <span id="probeLastScanBadge" class="chip">Last scan: --</span>
+          </div>
+
+          <div class="btn-row" style="margin-top:12px;">
+            <label style="font-size:12px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+              <input type="checkbox" id="probeAutoToggle"> Auto-probe
+            </label>
+            <label style="font-size:12px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+              <input type="checkbox" id="probeAutoDiscoverToggle"> Auto-discover
+            </label>
+            <label style="font-size:12px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+              <input type="checkbox" id="probeAutoScanToggle"> Auto-scan
+            </label>
+          </div>
+
+          <div id="probeStatusText" class="muted" style="margin-top:10px;">No probe activity yet. Click "Discover Hosts" to find devices on the local network.</div>
+
+          <div class="table-wrap" style="margin-top:14px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>IP</th>
+                  <th>MAC</th>
+                  <th>Hostname</th>
+                  <th>Vendor</th>
+                  <th>Open Ports</th>
+                  <th>Services</th>
+                  <th>Banners</th>
+                  <th>Last Scanned</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="probeHostsBody">
+                <tr><td colspan="9" class="muted">No hosts discovered yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="card w-12" data-card>
+        <div class="card-header" data-collapse-toggle>
+          <div class="card-header-left">
+            <h3>Correlated Device Intel</h3>
+            <div class="muted">Capture → normalize → correlate → score → cluster → summarize</div>
+          </div>
+          <button class="collapse-btn" type="button">−</button>
+        </div>
+        <div class="card-body">
+          <div class="btn-row">
+            <span id="fusionStateBadge" class="chip">Fusion: loading...</span>
+            <span id="fusionClustersBadge" class="chip">Clusters: 0</span>
+            <span id="fusionMultiSignalBadge" class="chip">Multi-signal: 0</span>
+            <span id="fusionIntelCoverageBadge" class="chip">With intel: 0</span>
+            <span id="fusionConfidenceBadge" class="chip">H/M/L: 0/0/0</span>
+          </div>
+          <div id="fusionStatusText" class="muted" style="margin-top:10px;">Building correlated device summaries...</div>
+
+          <div class="table-wrap" style="margin-top:14px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Cluster</th>
+                  <th>Score</th>
+                  <th>Modalities</th>
+                  <th>Summary</th>
+                  <th>Evidence</th>
+                  <th>Authorized checks</th>
+                </tr>
+              </thead>
+              <tbody id="fusionClustersBody">
+                <tr><td colspan="6" class="muted">Loading correlated device intel...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="card w-12" data-card>
+        <div class="card-header" data-collapse-toggle>
+          <div class="card-header-left">
             <h3>Authorized Exposure Intel</h3>
             <div class="muted">Metadata-only reachability and exposure summaries merged into BLE/Wi-Fi hits</div>
           </div>

@@ -16,6 +16,7 @@ Pi-based RF survey, tracking, listen, BLE, and Wi-Fi field viewer with:
 - sticky local browser memory for BLE and Wi-Fi findings
 - row lock / unlock for important BLE and Wi-Fi hits
 - BLE ↔ Wi-Fi related-candidate hints in the UI
+- Network Probe: Shodan-style host discovery, port scanning, banner grabbing, and TLS cert extraction
 - optional Alfa hotspot access for field use
 
 This README assumes you are starting from a cloned repo.
@@ -38,6 +39,8 @@ This README assumes you are starting from a cloned repo.
 - Clear-memory buttons for BLE / Wi-Fi cards
 - Lock buttons on BLE / Wi-Fi rows so important findings stay pinned to the top
 - BLE ↔ Wi-Fi related-candidate hinting so one side can help annotate the other
+- Network Probe card — discover hosts via ARP, scan TCP ports, grab banners, extract TLS certs
+- Probe results flow into device-intel and fusion clusters with exposure class auto-calculation
 - Headless Pi-friendly deployment
 - Optional Alfa hotspot for car or field use
 
@@ -52,6 +55,10 @@ rf-viewer-v2/
 ├── server.js
 ├── ble-matcher.js
 ├── wifi-matcher.js
+├── intel-fusion.js
+├── network-discovery.js
+├── port-scanner.js
+├── probe-to-intel.js
 ├── settings.json
 ├── scanner.json
 ├── scanner.runtime.json
@@ -72,7 +79,9 @@ rf-viewer-v2/
 │   ├── wifi-live.jsonl
 │   ├── wifi-status.json
 │   ├── wifi-summary.json
-│   └── wifi-control.json
+│   ├── wifi-control.json
+│   ├── probe-results.json
+│   └── host-discovery.json
 └── scripts/
     └── start-alfa-hotspot.sh
 ```
@@ -382,6 +391,78 @@ This lets the UI show:
 - related Wi-Fi hint on BLE rows
 
 These are **annotations**, not hard identity merges.
+
+---
+
+## Network Probe
+
+The Network Probe feature adds Shodan-style host discovery and port scanning to the RF viewer, enriching BLE and Wi-Fi observations with active network intelligence.
+
+### Capabilities
+
+- **Host Discovery** — scans the local ARP / neighbor table (`ip neigh` on Linux, `arp -a` on macOS) and correlates discovered MACs with Wi-Fi BSSIDs
+- **TCP Port Scanning** — connect-scan with configurable port list, concurrency, and timeouts
+- **Banner Grabbing** — reads service banners from open ports (SSH, FTP, SMTP, HTTP, Redis, MySQL, MongoDB, RTSP, etc.)
+- **TLS Certificate Extraction** — grabs subject, issuer, SANs, and expiry from TLS-enabled ports
+- **Service Identification** — pattern-matches banners to identify software versions
+- **Exposure Classification** — auto-calculates E0–E4 exposure class based on open services:
+  - **E4**: Unauthenticated database ports (MySQL, Postgres, MongoDB, Redis)
+  - **E3**: Management services (SSH, Telnet, RTSP)
+  - **E2**: Web services (HTTP)
+  - **E1**: Encrypted-only services
+  - **E0**: No open ports
+
+### API Routes
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/probe/status` | Probe state, config, discovery data, result count |
+| POST | `/api/probe/discover` | Trigger host discovery |
+| POST | `/api/probe/scan` | Scan hosts — body: `{target: "all"\|"<ip>", ports?, timeout?}` |
+| GET | `/api/probe/results` | All scan results keyed by IP |
+| GET | `/api/probe/results/:ip` | Single host scan result |
+| POST | `/api/probe/auto` | Toggle auto-probe settings |
+| POST | `/api/probe/config` | Update port list, timeouts, concurrency, subnet lists |
+
+### Configuration
+
+Probe settings live in `scanner.json` under the `probe` key:
+
+```json
+{
+  "probe": {
+    "enabled": false,
+    "autoDiscover": false,
+    "discoverIntervalSec": 300,
+    "autoScan": false,
+    "scanIntervalSec": 600,
+    "ports": [21,22,23,25,53,80,110,143,443,445,554,993,1883,3000,3306,5432,5672,6379,8080,8443,8554,8883,9090,27017],
+    "timeoutMs": 2000,
+    "concurrency": 10,
+    "subnetAllowList": [],
+    "subnetDenyList": []
+  }
+}
+```
+
+### Fusion Integration
+
+Probe results automatically:
+
+1. Get converted to device-intel items via `probe-to-intel.js` (keyed by MAC when available, IP otherwise)
+2. Flow into the Union-Find fusion engine with a reachability bonus (+15 relation strength)
+3. Appear in fusion cluster detail views with service versions, banners, and TLS cert info
+4. Enrich Wi-Fi network rows with probe summaries (open port count, service list)
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `network-discovery.js` | ARP/neighbor table parsing, reverse DNS, OUI vendor lookup, Wi-Fi BSSID correlation |
+| `port-scanner.js` | TCP connect scanning, banner grabbing, TLS cert extraction, service identification |
+| `probe-to-intel.js` | Converts scan results to device-intel format with exposure class auto-calculation |
+| `data/host-discovery.json` | Persisted host discovery results |
+| `data/probe-results.json` | Persisted port scan results |
 
 ---
 
