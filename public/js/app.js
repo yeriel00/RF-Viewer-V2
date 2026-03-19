@@ -106,6 +106,10 @@ const fusionSearchInput = document.getElementById("fusionSearchInput");
 const fusionSearchBtn = document.getElementById("fusionSearchBtn");
 const fusionSearchClearBtn = document.getElementById("fusionSearchClearBtn");
 const fusionSearchStatus = document.getElementById("fusionSearchStatus");
+const fusionPagination = document.getElementById("fusionPagination");
+const fusionPagePrev = document.getElementById("fusionPagePrev");
+const fusionPageNext = document.getElementById("fusionPageNext");
+const fusionPageInfo = document.getElementById("fusionPageInfo");
 
 const probeDiscoverBtn = document.getElementById("probeDiscoverBtn");
 const probeScanAllBtn = document.getElementById("probeScanAllBtn");
@@ -2322,6 +2326,10 @@ function openFusionDetail(clusterId) {
 }
 
 let fusionSearchQuery = "";
+let fusionSortKey = "score";
+let fusionSortDir = "desc";
+let fusionPage = 0;
+const FUSION_PAGE_SIZE = 20;
 
 function matchesFusionSearch(cluster, query) {
   if (!query) return true;
@@ -2407,9 +2415,9 @@ function renderFusionData(fusion) {
   if (!fusionClustersBody) return;
 
   // Apply search filter
-  const filtered = fusionSearchQuery
+  let filtered = fusionSearchQuery
     ? currentFusion.clusters.filter((c) => matchesFusionSearch(c, fusionSearchQuery))
-    : currentFusion.clusters;
+    : [...currentFusion.clusters];
 
   if (fusionSearchStatus) {
     if (fusionSearchQuery) {
@@ -2420,12 +2428,51 @@ function renderFusionData(fusion) {
     }
   }
 
+  // Sort
+  filtered.sort((a, b) => {
+    let cmp = 0;
+    if (fusionSortKey === "score") {
+      cmp = (a.score ?? 0) - (b.score ?? 0);
+    } else if (fusionSortKey === "cluster") {
+      cmp = (a.label || a.clusterId || "").localeCompare(b.label || b.clusterId || "");
+    } else if (fusionSortKey === "seen") {
+      cmp = (a.lastSeen || a.updatedAt || "").localeCompare(b.lastSeen || b.updatedAt || "");
+    }
+    return fusionSortDir === "desc" ? -cmp : cmp;
+  });
+
+  // Update sort arrows
+  document.querySelectorAll(".fusion-sortable .sort-arrow").forEach((el) => {
+    el.className = "sort-arrow";
+  });
+  const activeHeader = document.querySelector(`.fusion-sortable[data-sort="${fusionSortKey}"] .sort-arrow`);
+  if (activeHeader) activeHeader.classList.add(fusionSortDir);
+
   if (!filtered.length) {
     fusionClustersBody.innerHTML = `<tr><td colspan="7" class="muted">${fusionSearchQuery ? "No clusters match your search." : "No correlated device clusters yet."}</td></tr>`;
+    if (fusionPagination) fusionPagination.style.display = "none";
     return;
   }
 
-  fusionClustersBody.innerHTML = filtered.map((cluster) => {
+  // Pagination
+  const totalPages = Math.ceil(filtered.length / FUSION_PAGE_SIZE);
+  if (fusionPage >= totalPages) fusionPage = totalPages - 1;
+  if (fusionPage < 0) fusionPage = 0;
+  const pageStart = fusionPage * FUSION_PAGE_SIZE;
+  const pageSlice = filtered.slice(pageStart, pageStart + FUSION_PAGE_SIZE);
+
+  if (fusionPagination) {
+    if (totalPages > 1) {
+      fusionPagination.style.display = "flex";
+      if (fusionPageInfo) fusionPageInfo.textContent = `Page ${fusionPage + 1} of ${totalPages} (${filtered.length} clusters)`;
+      if (fusionPagePrev) fusionPagePrev.disabled = fusionPage === 0;
+      if (fusionPageNext) fusionPageNext.disabled = fusionPage >= totalPages - 1;
+    } else {
+      fusionPagination.style.display = "none";
+    }
+  }
+
+  fusionClustersBody.innerHTML = pageSlice.map((cluster) => {
     const modalities = [];
     if (cluster.modalityCounts?.wifi) modalities.push(`Wi-Fi ${cluster.modalityCounts.wifi}`);
     if (cluster.modalityCounts?.ble) modalities.push(`BLE ${cluster.modalityCounts.ble}`);
@@ -2483,7 +2530,7 @@ function renderFusionData(fusion) {
         <td>${escapeHtml(modalities.join(" + ") || "--")}</td>
         <td>${escapeHtml(cluster.summary || "--")}</td>
         <td>${escapeHtml((cluster.evidence || []).slice(0, 3).join(" \u2022 ") || "--")}</td>
-        <td>${escapeHtml((cluster.authorizedChecks || []).slice(0, 2).join(" \u2022 ") || "--")}</td>
+        <td>${escapeHtml(cluster.lastSeen ? fmtShortTime(cluster.lastSeen) : (cluster.updatedAt ? fmtShortTime(cluster.updatedAt) : "--"))}</td>
         <td><button class="fusion-probe-btn" data-cluster-id="${escapeHtml(cluster.clusterId)}" style="font-size:11px;padding:2px 8px;">Probe</button></td>
       </tr>
     `;
@@ -3378,22 +3425,62 @@ if (wifiClearMemoryBtn) wifiClearMemoryBtn.addEventListener("click", clearWifiMe
 if (exportSessionBtn) exportSessionBtn.addEventListener("click", exportSessionBundle);
 if (probeDiscoverBtn) probeDiscoverBtn.addEventListener("click", () => triggerDiscovery());
 if (probeScanAllBtn) probeScanAllBtn.addEventListener("click", () => triggerScan("all"));
-if (fusionProbeAllBtn) fusionProbeAllBtn.addEventListener("click", () => triggerClusterProbe("all"));
+if (fusionProbeAllBtn) fusionProbeAllBtn.addEventListener("click", () => {
+  const overlay = document.createElement("div");
+  overlay.className = "fusion-confirm-overlay";
+  overlay.innerHTML = `
+    <div class="fusion-confirm-box">
+      <p>Probe all reachable clusters?<br><span class="muted" style="font-size:12px;">This will actively scan all cluster IPs for open ports.</span></p>
+      <div class="btn-row">
+        <button class="fusion-confirm-yes" type="button">Yes</button>
+        <button class="fusion-confirm-no" type="button">No</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector(".fusion-confirm-yes").addEventListener("click", () => { overlay.remove(); triggerClusterProbe("all"); });
+  overlay.querySelector(".fusion-confirm-no").addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+});
 
 if (fusionSearchBtn) fusionSearchBtn.addEventListener("click", () => {
   fusionSearchQuery = (fusionSearchInput ? fusionSearchInput.value : "").trim();
+  fusionPage = 0;
   renderFusionData(currentFusion);
 });
 if (fusionSearchClearBtn) fusionSearchClearBtn.addEventListener("click", () => {
   fusionSearchQuery = "";
+  fusionPage = 0;
   if (fusionSearchInput) fusionSearchInput.value = "";
   renderFusionData(currentFusion);
 });
 if (fusionSearchInput) fusionSearchInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     fusionSearchQuery = fusionSearchInput.value.trim();
+    fusionPage = 0;
     renderFusionData(currentFusion);
   }
+});
+
+/* Fusion table sort + pagination handlers */
+document.querySelectorAll(".fusion-sortable").forEach((th) => {
+  th.addEventListener("click", () => {
+    const key = th.dataset.sort;
+    if (fusionSortKey === key) {
+      fusionSortDir = fusionSortDir === "desc" ? "asc" : "desc";
+    } else {
+      fusionSortKey = key;
+      fusionSortDir = key === "cluster" ? "asc" : "desc";
+    }
+    fusionPage = 0;
+    renderFusionData(currentFusion);
+  });
+});
+if (fusionPagePrev) fusionPagePrev.addEventListener("click", () => {
+  if (fusionPage > 0) { fusionPage--; renderFusionData(currentFusion); }
+});
+if (fusionPageNext) fusionPageNext.addEventListener("click", () => {
+  fusionPage++; renderFusionData(currentFusion);
 });
 if (probeAutoToggle) probeAutoToggle.addEventListener("change", () => toggleAutoProbe("enabled", probeAutoToggle.checked));
 if (probeAutoDiscoverToggle) probeAutoDiscoverToggle.addEventListener("change", () => toggleAutoProbe("autoDiscover", probeAutoDiscoverToggle.checked));

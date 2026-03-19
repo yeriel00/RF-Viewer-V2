@@ -559,6 +559,18 @@
       padding: 3px 7px;
     }
 
+    .fusion-sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+    .fusion-sortable:hover { color: var(--accent, #60a5fa); }
+    .sort-arrow { font-size: 10px; margin-left: 2px; opacity: 0.4; }
+    .sort-arrow.asc::after { content: "\25B2"; opacity: 1; }
+    .sort-arrow.desc::after { content: "\25BC"; opacity: 1; }
+
+    .fusion-confirm-overlay { position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:9999; display:flex; align-items:center; justify-content:center; }
+    .fusion-confirm-box { background:var(--card-bg, #1a1e26); border:1px solid var(--border); border-radius:8px; padding:20px 28px; text-align:center; min-width:280px; }
+    .fusion-confirm-box p { margin:0 0 16px; font-size:14px; }
+    .fusion-confirm-box .btn-row { display:flex; gap:10px; justify-content:center; }
+    .fusion-confirm-box button { padding:6px 18px; font-size:13px; border-radius:4px; cursor:pointer; }
+
     @media (max-width: 1024px) {
       .card.w-3,
       .card.w-4,
@@ -1131,12 +1143,12 @@
             <table>
               <thead>
                 <tr>
-                  <th>Cluster</th>
-                  <th>Score</th>
+                  <th class="fusion-sortable" data-sort="cluster">Cluster <span class="sort-arrow"></span></th>
+                  <th class="fusion-sortable" data-sort="score">Score <span class="sort-arrow"></span></th>
                   <th>Modalities</th>
                   <th>Summary</th>
                   <th>Evidence</th>
-                  <th>Authorized checks</th>
+                  <th class="fusion-sortable" data-sort="seen">Last Seen <span class="sort-arrow"></span></th>
                   <th style="width:60px;">Probe</th>
                 </tr>
               </thead>
@@ -1144,6 +1156,11 @@
                 <tr><td colspan="7" class="muted">Loading correlated device intel...</td></tr>
               </tbody>
             </table>
+          </div>
+          <div id="fusionPagination" style="display:none; margin-top:8px; justify-content:center; align-items:center; gap:8px; flex-wrap:wrap;">
+            <button id="fusionPagePrev" type="button" style="padding:4px 10px; font-size:12px;">&laquo; Prev</button>
+            <span id="fusionPageInfo" class="muted" style="font-size:12px;">Page 1 of 1</span>
+            <button id="fusionPageNext" type="button" style="padding:4px 10px; font-size:12px;">Next &raquo;</button>
           </div>
         </div>
       </section>
