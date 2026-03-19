@@ -461,9 +461,30 @@ async function runScan(targets, options = {}) {
       hostConcurrency: 3
     });
 
-    // Persist results keyed by IP
+    // Persist results keyed by IP — compute scan diff against previous
     const stored = readProbeResults();
     for (const result of results) {
+      const prev = stored.hosts[result.ip];
+      if (prev && Array.isArray(prev.openPorts)) {
+        const prevPorts = new Set(prev.openPorts.map((p) => p.port));
+        const currPorts = new Set(result.openPorts.map((p) => p.port));
+        const newPorts = result.openPorts.filter((p) => !prevPorts.has(p.port)).map((p) => p.port);
+        const closedPorts = prev.openPorts.filter((p) => !currPorts.has(p.port)).map((p) => p.port);
+        const changedVersions = result.openPorts
+          .filter((p) => {
+            const old = prev.openPorts.find((o) => o.port === p.port);
+            return old && old.version && p.version && old.version !== p.version;
+          })
+          .map((p) => ({ port: p.port, was: prev.openPorts.find((o) => o.port === p.port).version, now: p.version }));
+        result.portDiff = {
+          newPorts,
+          closedPorts,
+          changedVersions,
+          previousScan: prev.scanCompleted || null
+        };
+      } else {
+        result.portDiff = { newPorts: result.openPorts.map((p) => p.port), closedPorts: [], changedVersions: [], previousScan: null };
+      }
       stored.hosts[result.ip] = result;
     }
     writeProbeResults(stored);
@@ -1641,6 +1662,81 @@ const webServer = http.createServer(async (req, res) => {
     return sendJson(res, { ok: true, result });
   }
 
+  // Shodan-style search across probe results and fusion clusters
+  if (req.method === "GET" && parsed.pathname === "/api/probe/search") {
+    const q = String(parsed.searchParams?.get("q") || "").trim().toLowerCase();
+    if (!q) return sendJson(res, { ok: false, error: "Missing query parameter ?q=" }, 400);
+
+    // Parse Shodan-style filters: port:80 service:http product:Hikvision os:linux title:camera deviceclass:ip-camera
+    const filters = {};
+    const freeText = [];
+    for (const token of q.split(/\s+/)) {
+      const sep = token.indexOf(":");
+      if (sep > 0) {
+        const key = token.slice(0, sep);
+        const val = token.slice(sep + 1);
+        if (["port", "service", "product", "os", "title", "banner", "deviceclass", "ip", "mac", "hostname"].includes(key)) {
+          filters[key] = val;
+          continue;
+        }
+      }
+      freeText.push(token);
+    }
+    const freeQuery = freeText.join(" ");
+
+    const stored = readProbeResults();
+    const hosts = stored.hosts || {};
+    const matches = [];
+
+    for (const [hostIp, hostResult] of Object.entries(hosts)) {
+      const ports = hostResult.openPorts || [];
+      if (!ports.length) continue;
+
+      // Filter checks
+      if (filters.port && !ports.some((p) => String(p.port) === filters.port)) continue;
+      if (filters.service && !ports.some((p) => String(p.service || "").toLowerCase().includes(filters.service))) continue;
+      if (filters.ip && !hostIp.includes(filters.ip)) continue;
+      if (filters.mac && !String(hostResult.mac || "").toLowerCase().includes(filters.mac)) continue;
+      if (filters.hostname && !String(hostResult.hostname || "").toLowerCase().includes(filters.hostname)) continue;
+      if (filters.os && !String(hostResult.osGuess || "").toLowerCase().includes(filters.os)) continue;
+
+      // Banner / product / title checks
+      const allBanners = ports.map((p) => [p.banner, p.version, p.httpTitle].filter(Boolean).join(" ").toLowerCase()).join(" ");
+      if (filters.product && !allBanners.includes(filters.product)) continue;
+      if (filters.banner && !allBanners.includes(filters.banner)) continue;
+      if (filters.title) {
+        const hasTitle = ports.some((p) => String(p.httpTitle || "").toLowerCase().includes(filters.title));
+        if (!hasTitle) continue;
+      }
+
+      // Device class filter
+      if (filters.deviceclass) {
+        const { classifyDeviceFromScan } = require("./port-scanner");
+        const cls = classifyDeviceFromScan(hostResult);
+        if (!cls || !cls.deviceClass.toLowerCase().includes(filters.deviceclass)) continue;
+      }
+
+      // Free text search across all fields
+      if (freeQuery) {
+        const haystack = [hostIp, hostResult.mac, hostResult.hostname, hostResult.osGuess, allBanners].filter(Boolean).join(" ").toLowerCase();
+        if (!haystack.includes(freeQuery)) continue;
+      }
+
+      matches.push({
+        ip: hostIp,
+        mac: hostResult.mac,
+        hostname: hostResult.hostname,
+        osGuess: hostResult.osGuess || null,
+        portCount: ports.length,
+        ports: ports.map((p) => ({ port: p.port, service: p.service, version: p.version, httpTitle: p.httpTitle || null })),
+        scanCompleted: hostResult.scanCompleted,
+        portDiff: hostResult.portDiff || null
+      });
+    }
+
+    return sendJson(res, { ok: true, query: q, count: matches.length, matches });
+  }
+
   if (req.method === "POST" && parsed.pathname === "/api/probe/auto") {
     try {
       const incoming = JSON.parse((await collectRequestBody(req)) || "{}");
@@ -1679,6 +1775,60 @@ const webServer = http.createServer(async (req, res) => {
       return sendJson(res, { ok: true, config: probeConfig });
     } catch (err) {
       return sendJson(res, { ok: false, error: err.message }, 400);
+    }
+  }
+
+  if (req.method === "POST" && parsed.pathname === "/api/probe/cluster") {
+    try {
+      const incoming = JSON.parse((await collectRequestBody(req)) || "{}");
+      const clusterIds = incoming.clusterIds;
+
+      // Build fresh fusion to find IPs in clusters
+      const bleControl = readBleControl();
+      const wifiControl = readWifiControl();
+      const bleSummary = enrichBleSummary({
+        ...loadJsonDiskFile(BLE_SUMMARY_FILE, { devices: [] }),
+        enabled: bleControl.enabled
+      });
+      const wifiSummary = enrichWifiSummary({
+        ...loadJsonDiskFile(WIFI_SUMMARY_FILE, { networks: [] }),
+        enabled: wifiControl.enabled
+      });
+      const intelStore = readDeviceIntelStore();
+      const fusion = buildIntelFusion({ wifiSummary, bleSummary, intelStore });
+
+      // Collect target IPs from the requested clusters
+      const targetIps = new Set();
+      for (const cluster of fusion.clusters) {
+        if (clusterIds !== "all" && Array.isArray(clusterIds) && !clusterIds.includes(cluster.clusterId)) continue;
+        const intelIds = cluster.identifiers?.intel || [];
+        for (const id of intelIds) {
+          if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(id)) targetIps.add(id);
+        }
+        // Also check raw wifi BSSIDs for ARP-resolved IPs
+        for (const net of (cluster.signals?.wifi || [])) {
+          const bssid = String(net.bssid || "").toUpperCase();
+          if (!bssid) continue;
+          const discovery = readHostDiscovery();
+          const match = (discovery.hosts || []).find((h) => String(h.mac || "").toUpperCase() === bssid);
+          if (match) targetIps.add(match.ip);
+        }
+      }
+
+      if (!targetIps.size) {
+        return sendJson(res, { ok: true, message: "No reachable IPs found in selected clusters", results: [], intelItemsCreated: 0 });
+      }
+
+      const targets = [...targetIps].map((ip) => {
+        const discovery = readHostDiscovery();
+        const known = (discovery.hosts || []).find((h) => h.ip === ip);
+        return { ip, mac: known?.mac || null, hostname: known?.hostname || null };
+      });
+
+      const result = await runScan(targets);
+      return sendJson(res, { ok: true, ...result, targetsScanned: targets.length });
+    } catch (err) {
+      return sendJson(res, { ok: false, error: err.message }, 500);
     }
   }
 

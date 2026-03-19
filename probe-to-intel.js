@@ -1,4 +1,4 @@
-const { PORT_SERVICES, TLS_PORTS } = require("./port-scanner");
+const { PORT_SERVICES, TLS_PORTS, classifyDeviceFromScan } = require("./port-scanner");
 
 /* -------------------------------------------------------
    Exposure class auto-calculation
@@ -10,7 +10,7 @@ const { PORT_SERVICES, TLS_PORTS } = require("./port-scanner");
 -------------------------------------------------------- */
 
 const E4_PORTS = new Set([3306, 5432, 27017, 6379, 5672]);
-const E3_PORTS = new Set([22, 23, 554, 8554, 1883, 445, 25]);
+const E3_PORTS = new Set([22, 23, 554, 8554, 1883, 445, 25, 81, 88, 37777, 7547, 5555, 1900]);
 const E2_PORTS = new Set([80, 8080, 3000, 9090]);
 const E1_PORTS = new Set([443, 8443, 993, 995, 8883]);
 
@@ -122,13 +122,25 @@ function probeResultToIntelItem(scanResult, options = {}) {
   const servicePorts = openPorts.map((p) => p.port);
   const protocolsSeen = [...new Set(openPorts.map((p) => (p.service || PORT_SERVICES[p.port] || "").toUpperCase()).filter(Boolean))];
 
+  // Classify device from scan result (IoT/camera/router/etc.)
+  const classification = classifyDeviceFromScan(scanResult);
+  const deviceClass = classification.deviceClass || null;
+  const deviceVendor = classification.vendor || null;
+
+  // Collect protocol-specific findings
+  const httpTitles = openPorts.map((p) => p.httpTitle).filter(Boolean);
+  const httpHashes = openPorts.map((p) => p.httpBodyHash).filter(Boolean);
+  const rtspMethods = openPorts.map((p) => p.rtspMethods).filter(Boolean);
+  const mqttResults = openPorts.map((p) => p.mqttConnack).filter(Boolean);
+
   // Build summary from discovered services
   const serviceNames = openPorts
     .map((p) => p.version || `${p.port}/${(p.service || "unknown").toUpperCase()}`)
     .slice(0, 4);
-  const summaryText = serviceNames.length
+  let summaryText = serviceNames.length
     ? `Probe: ${serviceNames.join(", ")}`
     : "Probe: no open ports";
+  if (deviceClass) summaryText += ` [${deviceClass}${deviceVendor ? "/" + deviceVendor : ""}]`;
 
   // Fastest response time as latency indicator
   const latencyMs = openPorts.length
@@ -145,13 +157,21 @@ function probeResultToIntelItem(scanResult, options = {}) {
     latencyMs,
     ip: scanResult.ip || null,
     hostname: scanResult.hostname || null,
+    osGuess: scanResult.osGuess || null,
     confidence,
     exposureClass,
+    deviceClass,
+    deviceVendor,
     evidenceMode: "active-probe",
     source: "scan",
     servicePorts,
     protocolsSeen,
     ports,
+    httpTitles: httpTitles.slice(0, 3),
+    httpHashes: httpHashes.slice(0, 3),
+    rtspMethods: rtspMethods[0] || null,
+    mqttStatus: mqttResults[0] || null,
+    portDiff: scanResult.portDiff || null,
     notes: null, // Don't overwrite manual notes
     updatedAt: new Date().toISOString()
   };

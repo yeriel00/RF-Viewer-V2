@@ -100,6 +100,12 @@ const fusionIntelCoverageBadge = document.getElementById("fusionIntelCoverageBad
 const fusionConfidenceBadge = document.getElementById("fusionConfidenceBadge");
 const fusionStatusText = document.getElementById("fusionStatusText");
 const fusionClustersBody = document.getElementById("fusionClustersBody");
+const fusionProbeAllBtn = document.getElementById("fusionProbeAllBtn");
+const fusionProbeBadge = document.getElementById("fusionProbeBadge");
+const fusionSearchInput = document.getElementById("fusionSearchInput");
+const fusionSearchBtn = document.getElementById("fusionSearchBtn");
+const fusionSearchClearBtn = document.getElementById("fusionSearchClearBtn");
+const fusionSearchStatus = document.getElementById("fusionSearchStatus");
 
 const probeDiscoverBtn = document.getElementById("probeDiscoverBtn");
 const probeScanAllBtn = document.getElementById("probeScanAllBtn");
@@ -1962,6 +1968,7 @@ function buildFusionDetailHtml(cluster) {
         <div><strong>Exposure:</strong> ${escapeHtml(cluster.maxExposure || "E0")}</div>
         <div><strong>Reachable:</strong> ${escapeHtml(cluster.reachable == null ? "unknown" : String(cluster.reachable))}</div>
         <div><strong>Surfaces:</strong> ${escapeHtml(cluster.surfaceSummary || "--")}</div>
+        ${cluster.probeData?.deviceClass ? `<div><strong>Device class:</strong> ${escapeHtml(cluster.probeData.deviceClass)}${cluster.probeData.deviceVendor ? " (" + escapeHtml(cluster.probeData.deviceVendor) + ")" : ""}</div>` : ""}
       </div>
 
       <div class="detail-block">
@@ -1989,9 +1996,20 @@ function buildFusionDetailHtml(cluster) {
       ${cluster.probeData?.hasProbeData ? `
       <div class="detail-block">
         <h4>Probe Data</h4>
+        ${cluster.probeData.osGuess ? `<div><strong>OS Guess:</strong> ${escapeHtml(cluster.probeData.osGuess)}</div>` : ""}
+        ${cluster.probeData.deviceClass ? `<div><strong>Device Class:</strong> ${escapeHtml(cluster.probeData.deviceClass)}${cluster.probeData.deviceVendor ? " (" + escapeHtml(cluster.probeData.deviceVendor) + ")" : ""}</div>` : ""}
+        ${(cluster.probeData.httpTitles || []).length ? `<div><strong>HTTP Titles:</strong> ${escapeHtml(cluster.probeData.httpTitles.join(" | "))}</div>` : ""}
+        ${cluster.probeData.rtspMethods ? `<div><strong>RTSP Methods:</strong> ${escapeHtml(cluster.probeData.rtspMethods)}</div>` : ""}
+        ${cluster.probeData.mqttStatus ? `<div><strong>MQTT Status:</strong> ${escapeHtml(cluster.probeData.mqttStatus)}</div>` : ""}
         ${(cluster.probeData.services || []).length ? `<div><strong>Services:</strong> ${escapeHtml(cluster.probeData.services.map((s) => `${s.port}/${s.version || "open"}`).join(", "))}</div>` : ""}
         ${(cluster.probeData.bannerSnippets || []).length ? `<div style="margin-top:4px;"><strong>Banners:</strong></div>${cluster.probeData.bannerSnippets.map((b) => `<div class="wifi-sub">${escapeHtml(b.port + ": " + b.snippet)}</div>`).join("")}` : ""}
         ${(cluster.probeData.tlsCerts || []).length ? `<div style="margin-top:4px;"><strong>TLS Certificates:</strong></div>${cluster.probeData.tlsCerts.map((c) => `<div class="wifi-sub">${escapeHtml(c)}</div>`).join("")}` : ""}
+        ${cluster.probeData.portDiff?.previousScan ? `
+        <div style="margin-top:4px;"><strong>Port Changes</strong> (since ${escapeHtml(cluster.probeData.portDiff.previousScan.slice(0, 16))})</div>
+        ${(cluster.probeData.portDiff.newPorts || []).length ? `<div style="color:var(--bad);">New ports: ${escapeHtml(cluster.probeData.portDiff.newPorts.join(", "))}</div>` : ""}
+        ${(cluster.probeData.portDiff.closedPorts || []).length ? `<div style="color:var(--good);">Closed ports: ${escapeHtml(cluster.probeData.portDiff.closedPorts.join(", "))}</div>` : ""}
+        ${(cluster.probeData.portDiff.changedVersions || []).length ? `<div>Version changes: ${cluster.probeData.portDiff.changedVersions.map((v) => escapeHtml(`${v.port}: ${v.was} → ${v.now}`)).join(", ")}</div>` : ""}
+        ` : ""}
       </div>
       ` : ""}
 
@@ -2224,6 +2242,34 @@ async function triggerScan(target) {
   }
 }
 
+async function triggerClusterProbe(clusterIdOrAll) {
+  const label = clusterIdOrAll === "all" ? "all clusters" : clusterIdOrAll;
+  if (fusionProbeBadge) { fusionProbeBadge.style.display = ""; fusionProbeBadge.textContent = `Probe: scanning ${label}...`; }
+  if (fusionProbeAllBtn) fusionProbeAllBtn.disabled = true;
+  try {
+    const body = clusterIdOrAll === "all"
+      ? { clusterIds: "all" }
+      : { clusterIds: [clusterIdOrAll] };
+    const data = await fetchJson("/api/probe/cluster", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    if (data.ok) {
+      const portCount = (data.results || []).reduce((sum, r) => sum + (r.openPorts || []).length, 0);
+      if (fusionProbeBadge) fusionProbeBadge.textContent = `Probe: ${data.targetsScanned || 0} scanned, ${portCount} ports`;
+      loadFusionData();
+      loadIntelData();
+    } else {
+      if (fusionProbeBadge) fusionProbeBadge.textContent = `Probe: ${data.message || data.error || "no targets"}`;
+    }
+  } catch (err) {
+    if (fusionProbeBadge) fusionProbeBadge.textContent = `Probe error: ${err.message}`;
+  } finally {
+    if (fusionProbeAllBtn) fusionProbeAllBtn.disabled = false;
+  }
+}
+
 async function toggleAutoProbe(field, value) {
   try {
     const body = {};
@@ -2267,6 +2313,59 @@ function openFusionDetail(clusterId) {
   );
 }
 
+let fusionSearchQuery = "";
+
+function matchesFusionSearch(cluster, query) {
+  if (!query) return true;
+  const tokens = query.toLowerCase().split(/\s+/);
+  const filters = {};
+  const freeText = [];
+
+  for (const tok of tokens) {
+    const sep = tok.indexOf(":");
+    if (sep > 0) {
+      const key = tok.slice(0, sep);
+      const val = tok.slice(sep + 1);
+      if (["port", "service", "product", "os", "title", "deviceclass", "family", "exposure", "confidence"].includes(key)) {
+        filters[key] = val;
+        continue;
+      }
+    }
+    freeText.push(tok);
+  }
+
+  const pd = cluster.probeData || {};
+  const allPorts = (cluster.signals?.intel || []).flatMap((i) => (i.servicePorts || []).map(String));
+  const allBanners = (cluster.signals?.intel || []).flatMap((i) => (i.ports || []).map((p) => [p.banner, p.version, p.httpTitle].filter(Boolean).join(" "))).join(" ").toLowerCase();
+  const allServices = (cluster.signals?.intel || []).flatMap((i) => (i.ports || []).map((p) => p.service || "")).join(" ").toLowerCase();
+
+  if (filters.port && !allPorts.includes(filters.port)) return false;
+  if (filters.service && !allServices.includes(filters.service)) return false;
+  if (filters.product && !allBanners.includes(filters.product)) return false;
+  if (filters.os && !(pd.osGuess || "").toLowerCase().includes(filters.os)) return false;
+  if (filters.title && !(pd.httpTitles || []).some((t) => t.toLowerCase().includes(filters.title))) return false;
+  if (filters.deviceclass && !(pd.deviceClass || "").toLowerCase().includes(filters.deviceclass)) return false;
+  if (filters.family && !(cluster.family || "").toLowerCase().includes(filters.family)) return false;
+  if (filters.exposure && !(cluster.maxExposure || "").toLowerCase().includes(filters.exposure)) return false;
+  if (filters.confidence && !(cluster.confidence || "").toLowerCase().includes(filters.confidence)) return false;
+
+  if (freeText.length) {
+    const haystack = [
+      cluster.label, cluster.family, cluster.summary,
+      pd.deviceClass, pd.deviceVendor, pd.osGuess,
+      ...(pd.httpTitles || []),
+      ...(cluster.identifiers?.wifi || []),
+      ...(cluster.identifiers?.ble || []),
+      ...(cluster.identifiers?.intel || []),
+      allBanners
+    ].filter(Boolean).join(" ").toLowerCase();
+    const free = freeText.join(" ");
+    if (!haystack.includes(free)) return false;
+  }
+
+  return true;
+}
+
 function renderFusionData(fusion) {
   currentFusion = {
     clusters: Array.isArray(fusion?.clusters) ? fusion.clusters : [],
@@ -2299,12 +2398,26 @@ function renderFusionData(fusion) {
 
   if (!fusionClustersBody) return;
 
-  if (!currentFusion.clusters.length) {
-    fusionClustersBody.innerHTML = `<tr><td colspan="6" class="muted">No correlated device clusters yet.</td></tr>`;
+  // Apply search filter
+  const filtered = fusionSearchQuery
+    ? currentFusion.clusters.filter((c) => matchesFusionSearch(c, fusionSearchQuery))
+    : currentFusion.clusters;
+
+  if (fusionSearchStatus) {
+    if (fusionSearchQuery) {
+      fusionSearchStatus.style.display = "";
+      fusionSearchStatus.textContent = `Showing ${filtered.length} of ${currentFusion.clusters.length} clusters matching "${fusionSearchQuery}"`;
+    } else {
+      fusionSearchStatus.style.display = "none";
+    }
+  }
+
+  if (!filtered.length) {
+    fusionClustersBody.innerHTML = `<tr><td colspan="7" class="muted">${fusionSearchQuery ? "No clusters match your search." : "No correlated device clusters yet."}</td></tr>`;
     return;
   }
 
-  fusionClustersBody.innerHTML = currentFusion.clusters.map((cluster) => {
+  fusionClustersBody.innerHTML = filtered.map((cluster) => {
     const modalities = [];
     if (cluster.modalityCounts?.wifi) modalities.push(`Wi-Fi ${cluster.modalityCounts.wifi}`);
     if (cluster.modalityCounts?.ble) modalities.push(`BLE ${cluster.modalityCounts.ble}`);
@@ -2314,25 +2427,56 @@ function renderFusionData(fusion) {
     const expClass = cluster.maxExposure || "E0";
     const expColor = expClass === "E4" ? "var(--bad)" : expClass === "E3" ? "#fb923c" : expClass === "E2" ? "var(--warn)" : expClass === "E1" ? "var(--good)" : "var(--muted)";
 
-    // Probe data: show service versions and banners if available
+    // Device class badge
+    let deviceBadge = "";
+    if (cluster.probeData?.deviceClass) {
+      const dc = cluster.probeData.deviceClass;
+      const vendor = cluster.probeData.deviceVendor;
+      const badgeColor = dc === "ip-camera" ? "var(--bad)" : dc === "iot-device" ? "#fb923c" : dc === "smart-home" ? "var(--warn)" : "var(--muted)";
+      deviceBadge = `<span class="chip" style="background:${badgeColor};color:#fff;font-size:10px;padding:1px 6px;">${escapeHtml(dc)}${vendor ? " \u00b7 " + escapeHtml(vendor) : ""}</span>`;
+    }
+
+    // OS badge
+    let osBadge = "";
+    if (cluster.probeData?.osGuess) {
+      osBadge = `<span class="chip" style="font-size:10px;padding:1px 6px;">${escapeHtml(cluster.probeData.osGuess)}</span>`;
+    }
+
+    // Probe data hints: services, titles, protocol details
     let probeHint = "";
     if (cluster.probeData?.hasProbeData) {
+      const parts = [];
       const svcList = (cluster.probeData.services || []).slice(0, 3).map((s) => s.version || `${s.port}`).join(", ");
-      if (svcList) probeHint = `<div class="wifi-sub" style="margin-top:2px;">\uD83D\uDD0D ${escapeHtml(svcList)}</div>`;
+      if (svcList) parts.push(`\uD83D\uDD0D ${escapeHtml(svcList)}`);
+      const titles = (cluster.probeData.httpTitles || []).slice(0, 2);
+      if (titles.length) parts.push(`\uD83C\uDFE0 ${escapeHtml(titles.join(", "))}`);
+      if (cluster.probeData.rtspMethods) parts.push(`\uD83C\uDFA5 RTSP`);
+      if (cluster.probeData.mqttStatus) parts.push(`\uD83D\uDCE1 MQTT:${escapeHtml(cluster.probeData.mqttStatus)}`);
+
+      // Port diff
+      const diff = cluster.probeData.portDiff;
+      if (diff) {
+        if (diff.newPorts?.length && diff.previousScan) parts.push(`<span style="color:var(--bad);">+${diff.newPorts.join(",")}</span>`);
+        if (diff.closedPorts?.length) parts.push(`<span style="color:var(--good);">-${diff.closedPorts.join(",")}</span>`);
+        if (diff.changedVersions?.length) parts.push(`\u0394${diff.changedVersions.length}ver`);
+      }
+
+      if (parts.length) probeHint = `<div class="wifi-sub" style="margin-top:2px;">${parts.join(" \u00b7 ")}</div>`;
     }
 
     return `
       <tr data-fusion-detail="${escapeHtml(cluster.clusterId)}">
         <td>
-          <div>${escapeHtml(cluster.label || cluster.clusterId)}</div>
-          <div class="wifi-sub">${escapeHtml(cluster.family || "unknown")} • ${escapeHtml((cluster.confidence || "none").toUpperCase())} • <span style="color:${expColor}">${escapeHtml(expClass)}</span></div>
+          <div>${escapeHtml(cluster.label || cluster.clusterId)} ${deviceBadge} ${osBadge}</div>
+          <div class="wifi-sub">${escapeHtml(cluster.family || "unknown")} \u2022 ${escapeHtml((cluster.confidence || "none").toUpperCase())} \u2022 <span style="color:${expColor}">${escapeHtml(expClass)}</span></div>
           ${probeHint}
         </td>
         <td>${escapeHtml(String(cluster.score ?? 0))}</td>
         <td>${escapeHtml(modalities.join(" + ") || "--")}</td>
         <td>${escapeHtml(cluster.summary || "--")}</td>
-        <td>${escapeHtml((cluster.evidence || []).slice(0, 3).join(" • ") || "--")}</td>
-        <td>${escapeHtml((cluster.authorizedChecks || []).slice(0, 2).join(" • ") || "--")}</td>
+        <td>${escapeHtml((cluster.evidence || []).slice(0, 3).join(" \u2022 ") || "--")}</td>
+        <td>${escapeHtml((cluster.authorizedChecks || []).slice(0, 2).join(" \u2022 ") || "--")}</td>
+        <td><button class="fusion-probe-btn" data-cluster-id="${escapeHtml(cluster.clusterId)}" style="font-size:11px;padding:2px 8px;">Probe</button></td>
       </tr>
     `;
   }).join("");
@@ -2349,7 +2493,7 @@ async function loadFusionData() {
     if (fusionStateBadge) fusionStateBadge.textContent = "Fusion: error";
     if (fusionStatusText) fusionStatusText.textContent = `Fusion load failed: ${err.message}`;
     if (fusionClustersBody) {
-      fusionClustersBody.innerHTML = `<tr><td colspan="6" class="muted">Fusion load failed: ${escapeHtml(err.message)}</td></tr>`;
+      fusionClustersBody.innerHTML = `<tr><td colspan="7" class="muted">Fusion load failed: ${escapeHtml(err.message)}</td></tr>`;
     }
   }
 }
@@ -3214,9 +3358,37 @@ if (wifiClearMemoryBtn) wifiClearMemoryBtn.addEventListener("click", clearWifiMe
 if (exportSessionBtn) exportSessionBtn.addEventListener("click", exportSessionBundle);
 if (probeDiscoverBtn) probeDiscoverBtn.addEventListener("click", () => triggerDiscovery());
 if (probeScanAllBtn) probeScanAllBtn.addEventListener("click", () => triggerScan("all"));
+if (fusionProbeAllBtn) fusionProbeAllBtn.addEventListener("click", () => triggerClusterProbe("all"));
+
+if (fusionSearchBtn) fusionSearchBtn.addEventListener("click", () => {
+  fusionSearchQuery = (fusionSearchInput ? fusionSearchInput.value : "").trim();
+  renderFusionData(currentFusion);
+});
+if (fusionSearchClearBtn) fusionSearchClearBtn.addEventListener("click", () => {
+  fusionSearchQuery = "";
+  if (fusionSearchInput) fusionSearchInput.value = "";
+  renderFusionData(currentFusion);
+});
+if (fusionSearchInput) fusionSearchInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    fusionSearchQuery = fusionSearchInput.value.trim();
+    renderFusionData(currentFusion);
+  }
+});
 if (probeAutoToggle) probeAutoToggle.addEventListener("change", () => toggleAutoProbe("enabled", probeAutoToggle.checked));
 if (probeAutoDiscoverToggle) probeAutoDiscoverToggle.addEventListener("change", () => toggleAutoProbe("autoDiscover", probeAutoDiscoverToggle.checked));
 if (probeAutoScanToggle) probeAutoScanToggle.addEventListener("change", () => toggleAutoProbe("autoScan", probeAutoScanToggle.checked));
+
+if (fusionClustersBody) {
+  fusionClustersBody.addEventListener("click", (event) => {
+    const probeBtn = event.target.closest(".fusion-probe-btn");
+    if (probeBtn) {
+      event.stopPropagation();
+      triggerClusterProbe(probeBtn.getAttribute("data-cluster-id"));
+      return;
+    }
+  });
+}
 
 if (probeHostsBody) {
   probeHostsBody.addEventListener("click", (event) => {

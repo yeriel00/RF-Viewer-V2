@@ -200,6 +200,8 @@ function buildIntelSignal(item) {
   const protocols = Array.isArray(item.protocolsSeen) ? item.protocolsSeen : [];
   const ports = Array.isArray(item.ports) ? item.ports : [];
   const exposure = String(item.exposureClass || "E0").toUpperCase();
+  const deviceClass = item.deviceClass || null;
+  const deviceVendor = item.deviceVendor || null;
 
   // Extract banner/version snippets and cert info for richer matching
   const bannerTokens = [];
@@ -220,12 +222,12 @@ function buildIntelSignal(item) {
     label: item.label || item.summary || item.key,
     family: item.scope || "generic",
     confidence: item.confidence || "medium",
-    baseScore: 25 + confidenceScore(item.confidence) + exposureWeight(exposure) + (item.reachable ? 12 : 0),
+    baseScore: 25 + confidenceScore(item.confidence) + exposureWeight(exposure) + (item.reachable ? 12 : 0) + (deviceClass === "ip-camera" ? 15 : deviceClass ? 8 : 0),
     timestamp: item.updatedAt,
     proximity: item.reachable ? "Reachable" : "Metadata only",
     identifiers: uniqueNorm([item.key, ...aliases, ip, hostname]),
     strongIdentifiers: uniqueNorm([item.key, ip, hostname]),
-    aliases: uniqueNorm([...aliases, ...protocols, ...servicePorts.map(String), ...ports.map((port) => String(port.port || port.service || ""))]),
+    aliases: uniqueNorm([...aliases, ...protocols, ...servicePorts.map(String), ...ports.map((port) => String(port.port || port.service || "")), deviceClass, deviceVendor].filter(Boolean)),
     names: uniqueNorm([item.label, hostname]),
     tokens: distinctiveTokens(item.key, item.label, item.summary, hostname, ...bannerTokens),
     ouis: uniqueNorm([getOui(item.key), ...aliases.map(getOui)]),
@@ -239,6 +241,14 @@ function buildIntelSignal(item) {
       summary: item.summary || null,
       evidenceMode: item.evidenceMode || "metadata-only",
       source: item.source || "manual",
+      deviceClass,
+      deviceVendor,
+      osGuess: item.osGuess || null,
+      httpTitles: Array.isArray(item.httpTitles) ? item.httpTitles : [],
+      httpHashes: Array.isArray(item.httpHashes) ? item.httpHashes : [],
+      rtspMethods: item.rtspMethods || null,
+      mqttStatus: item.mqttStatus || null,
+      portDiff: item.portDiff || null,
       servicePorts,
       protocolsSeen: protocols,
       ports,
@@ -401,6 +411,13 @@ function summarizeSurfaces(intelSignals, family) {
 
 function clusterChecks(cluster) {
   const steps = [];
+  const dc = cluster.probeData?.deviceClass;
+  if (dc === "ip-camera") {
+    steps.push("Confirm whether this IP camera is authorized and enrolled in the local NVR.");
+  }
+  if (dc === "iot-device" || dc === "smart-home") {
+    steps.push("Verify this IoT device against the approved asset inventory — check for default credentials.");
+  }
   if (cluster.modalityCounts.intel) {
     steps.push("Validate the authorized intel record against the observed radio identifiers.");
   }
@@ -427,6 +444,11 @@ function clusterSummary(cluster) {
   if (cluster.modalityCounts.intel) modes.push(`intel ${cluster.modalityCounts.intel}`);
   parts.push(modes.join(" + "));
 
+  if (cluster.probeData?.deviceClass) {
+    const dc = cluster.probeData.deviceClass.replace(/-/g, " ");
+    const vendor = cluster.probeData.deviceVendor;
+    parts.push(vendor ? `${dc} (${vendor})` : dc);
+  }
   if (cluster.primaryProximity) parts.push(cluster.primaryProximity);
   if (cluster.maxExposure && cluster.maxExposure !== "E0") parts.push(cluster.maxExposure);
   if (cluster.reachable === true) parts.push("reachable metadata");
@@ -480,12 +502,45 @@ function buildCluster(signals, relations, index) {
     hasProbeData: false,
     services: [],
     tlsCerts: [],
-    bannerSnippets: []
+    bannerSnippets: [],
+    deviceClass: null,
+    deviceVendor: null,
+    osGuess: null,
+    httpTitles: [],
+    rtspMethods: null,
+    mqttStatus: null,
+    portDiff: null
   };
 
   for (const signal of intelSignals) {
     if (signal.metadata?.source !== "scan") continue;
     probeData.hasProbeData = true;
+
+    // Pick first non-null deviceClass
+    if (!probeData.deviceClass && signal.metadata?.deviceClass) {
+      probeData.deviceClass = signal.metadata.deviceClass;
+      probeData.deviceVendor = signal.metadata.deviceVendor || null;
+    }
+
+    if (!probeData.osGuess && signal.metadata?.osGuess) {
+      probeData.osGuess = signal.metadata.osGuess;
+    }
+
+    if (signal.metadata?.httpTitles?.length) {
+      probeData.httpTitles.push(...signal.metadata.httpTitles);
+    }
+
+    if (!probeData.rtspMethods && signal.metadata?.rtspMethods) {
+      probeData.rtspMethods = signal.metadata.rtspMethods;
+    }
+
+    if (!probeData.mqttStatus && signal.metadata?.mqttStatus) {
+      probeData.mqttStatus = signal.metadata.mqttStatus;
+    }
+
+    if (!probeData.portDiff && signal.metadata?.portDiff) {
+      probeData.portDiff = signal.metadata.portDiff;
+    }
 
     for (const pv of toArray(signal.metadata?.portVersions)) {
       if (pv.version) probeData.services.push({ port: pv.port, version: pv.version });
@@ -499,6 +554,7 @@ function buildCluster(signals, relations, index) {
   }
   probeData.services = probeData.services.slice(0, 6);
   probeData.bannerSnippets = probeData.bannerSnippets.slice(0, 4);
+  probeData.httpTitles = [...new Set(probeData.httpTitles)].slice(0, 3);
 
   const cluster = {
     clusterId: `cluster-${index + 1}`,

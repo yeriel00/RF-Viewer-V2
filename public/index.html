@@ -1071,7 +1071,7 @@
         <div class="card-header" data-collapse-toggle>
           <div class="card-header-left">
             <h3>Network Probe</h3>
-            <div class="muted">Discover hosts, scan ports, grab banners &amp; TLS certs — auto-feeds into Device Intel</div>
+            <div class="muted">Background host discovery &amp; port scanning — feeds into Correlated Device Intel</div>
           </div>
           <button class="collapse-btn" type="button">−</button>
         </div>
@@ -1079,9 +1079,6 @@
           <div class="btn-row">
             <button id="probeDiscoverBtn" type="button">Discover Hosts</button>
             <button id="probeScanAllBtn" type="button">Scan All Hosts</button>
-          </div>
-
-          <div class="btn-row" style="margin-top:12px;">
             <span id="probeStateBadge" class="chip">Probe: idle</span>
             <span id="probeHostsBadge" class="chip">Hosts: 0</span>
             <span id="probePortsBadge" class="chip">Open ports: 0</span>
@@ -1089,7 +1086,7 @@
             <span id="probeLastScanBadge" class="chip">Last scan: --</span>
           </div>
 
-          <div class="btn-row" style="margin-top:12px;">
+          <div class="btn-row" style="margin-top:8px;">
             <label style="font-size:12px; display:flex; align-items:center; gap:6px; cursor:pointer;">
               <input type="checkbox" id="probeAutoToggle"> Auto-probe
             </label>
@@ -1099,29 +1096,7 @@
             <label style="font-size:12px; display:flex; align-items:center; gap:6px; cursor:pointer;">
               <input type="checkbox" id="probeAutoScanToggle"> Auto-scan
             </label>
-          </div>
-
-          <div id="probeStatusText" class="muted" style="margin-top:10px;">No probe activity yet. Click "Discover Hosts" to find devices on the local network.</div>
-
-          <div class="table-wrap" style="margin-top:14px;">
-            <table>
-              <thead>
-                <tr>
-                  <th>IP</th>
-                  <th>MAC</th>
-                  <th>Hostname</th>
-                  <th>Vendor</th>
-                  <th>Open Ports</th>
-                  <th>Services</th>
-                  <th>Banners</th>
-                  <th>Last Scanned</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody id="probeHostsBody">
-                <tr><td colspan="9" class="muted">No hosts discovered yet.</td></tr>
-              </tbody>
-            </table>
+            <span id="probeStatusText" class="muted" style="margin-left:12px;">No probe activity yet.</span>
           </div>
         </div>
       </section>
@@ -1136,12 +1111,20 @@
         </div>
         <div class="card-body">
           <div class="btn-row">
+            <button id="fusionProbeAllBtn" type="button">Probe All Reachable</button>
             <span id="fusionStateBadge" class="chip">Fusion: loading...</span>
             <span id="fusionClustersBadge" class="chip">Clusters: 0</span>
             <span id="fusionMultiSignalBadge" class="chip">Multi-signal: 0</span>
             <span id="fusionIntelCoverageBadge" class="chip">With intel: 0</span>
             <span id="fusionConfidenceBadge" class="chip">H/M/L: 0/0/0</span>
+            <span id="fusionProbeBadge" class="chip" style="display:none;">Probe: idle</span>
           </div>
+          <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+            <input id="fusionSearchInput" type="text" placeholder="Search: port:554 product:Hikvision os:linux title:camera deviceclass:ip-camera ..." style="flex:1; padding:6px 10px; font-size:13px; background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:4px;">
+            <button id="fusionSearchBtn" type="button" style="padding:6px 14px; font-size:13px;">Search</button>
+            <button id="fusionSearchClearBtn" type="button" style="padding:6px 10px; font-size:12px;">Clear</button>
+          </div>
+          <div id="fusionSearchStatus" class="muted" style="margin-top:4px; display:none;"></div>
           <div id="fusionStatusText" class="muted" style="margin-top:10px;">Building correlated device summaries...</div>
 
           <div class="table-wrap" style="margin-top:14px;">
@@ -1154,10 +1137,11 @@
                   <th>Summary</th>
                   <th>Evidence</th>
                   <th>Authorized checks</th>
+                  <th style="width:60px;">Probe</th>
                 </tr>
               </thead>
               <tbody id="fusionClustersBody">
-                <tr><td colspan="6" class="muted">Loading correlated device intel...</td></tr>
+                <tr><td colspan="7" class="muted">Loading correlated device intel...</td></tr>
               </tbody>
             </table>
           </div>
