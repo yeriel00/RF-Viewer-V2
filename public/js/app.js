@@ -83,6 +83,16 @@ const wifiStrongestBadge = document.getElementById("wifiStrongestBadge");
 const wifiRememberedBadge = document.getElementById("wifiRememberedBadge");
 const wifiMemoryInfo = document.getElementById("wifiMemoryInfo");
 const wifiNetworksBody = document.getElementById("wifiNetworksBody");
+const bleIntelBadge = document.getElementById("bleIntelBadge");
+const bleExposureBadge = document.getElementById("bleExposureBadge");
+const wifiIntelBadge = document.getElementById("wifiIntelBadge");
+const wifiExposureBadge = document.getElementById("wifiExposureBadge");
+const intelStateBadge = document.getElementById("intelStateBadge");
+const intelEntriesBadge = document.getElementById("intelEntriesBadge");
+const intelReachableBadge = document.getElementById("intelReachableBadge");
+const intelExposureBadge = document.getElementById("intelExposureBadge");
+const intelStatusText = document.getElementById("intelStatusText");
+const intelUpdatedText = document.getElementById("intelUpdatedText");
 
 const proximityEnabled = document.getElementById("proximityEnabled");
 const audioEnabled = document.getElementById("audioEnabled");
@@ -124,6 +134,7 @@ let refreshTimer = null;
 let diagnosticsTimer = null;
 let bleTimer = null;
 let wifiTimer = null;
+let intelTimer = null;
 
 let currentTrace = [];
 let currentSettings = null;
@@ -149,6 +160,7 @@ let lastBleStatus = null;
 let lastBleSummary = null;
 let lastWifiStatus = null;
 let lastWifiSummary = null;
+let currentIntel = { items: [], summary: null, byKey: {} };
 let selectedDetail = null;
 
 let bleMemory = loadMemoryStore(BLE_MEMORY_KEY);
@@ -202,6 +214,125 @@ function parseTimeMs(value) {
   if (!value) return 0;
   const n = new Date(value).getTime();
   return Number.isFinite(n) ? n : 0;
+}
+
+function normalizeIntelKey(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function buildIntelIndex(items = []) {
+  const byKey = {};
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    if (!item || !item.key) return;
+    const primary = normalizeIntelKey(item.key);
+    if (!primary) return;
+    byKey[primary] = item;
+    const aliases = Array.isArray(item.aliases) ? item.aliases : [];
+    aliases.forEach((alias) => {
+      const normalized = normalizeIntelKey(alias);
+      if (normalized && !byKey[normalized]) byKey[normalized] = item;
+    });
+  });
+  return byKey;
+}
+
+function getIntelForEntry(entry) {
+  const candidates = [
+    entry?.address,
+    entry?.bssid,
+    entry?.ssid,
+    entry?.match?.passive?.bssid,
+    entry?.match?.passive?.ssid
+  ].map(normalizeIntelKey).filter(Boolean);
+
+  for (const key of candidates) {
+    if (currentIntel.byKey[key]) return currentIntel.byKey[key];
+  }
+  return null;
+}
+
+function intelPortSummary(intel) {
+  const ports = Array.isArray(intel?.ports) ? intel.ports : [];
+  if (ports.length) {
+    return ports.slice(0, 3).map((port) => {
+      const bits = [];
+      if (port.port) bits.push(port.port);
+      if (port.service) bits.push(String(port.service).toUpperCase());
+      if (port.surfaceType) bits.push(port.surfaceType);
+      return bits.join("/");
+    }).join(" • ");
+  }
+
+  const servicePorts = Array.isArray(intel?.servicePorts) ? intel.servicePorts : [];
+  return servicePorts.length ? servicePorts.join(", ") : "--";
+}
+
+function fmtLatency(latencyMs) {
+  return typeof latencyMs === "number" && Number.isFinite(latencyMs)
+    ? `${latencyMs} ms`
+    : "--";
+}
+
+function renderIntelInlineHtml(intel) {
+  if (!intel) {
+    return `<div class="wifi-sub">Intel: none</div>`;
+  }
+
+  const reachability = intel.reachable === true
+    ? `Reachable • ${escapeHtml(fmtLatency(intel.latencyMs))}`
+    : intel.reachable === false
+      ? "Not reachable"
+      : "Reachability unknown";
+
+  const exposure = escapeHtml(intel.exposureClass || "E0");
+  const summary = escapeHtml(intel.summary || "Metadata-only intel present");
+  const portText = escapeHtml(intelPortSummary(intel));
+
+  return `
+    <div class="wifi-related" style="margin-top:4px;">
+      <div>Intel: ${reachability}</div>
+      <div class="wifi-sub">Exposure: ${exposure} • Ports: ${portText}</div>
+      <div class="wifi-sub">${summary}</div>
+    </div>
+  `;
+}
+
+function buildIntelDetailHtml(intel) {
+  if (!intel) {
+    return `<div class="detail-block"><h4>Exposure intel</h4><div>No authorized metadata-only intel mapped to this entry.</div></div>`;
+  }
+
+  const ports = Array.isArray(intel.ports) ? intel.ports : [];
+  const portLines = ports.length
+    ? ports.map((port) => {
+        const pieces = [];
+        if (port.port) pieces.push(`Port ${port.port}`);
+        if (port.service) pieces.push(String(port.service).toUpperCase());
+        if (port.transport) pieces.push(String(port.transport).toUpperCase());
+        if (port.surfaceType) pieces.push(port.surfaceType);
+        if (port.authObserved === false) pieces.push("no auth observed");
+        if (port.exposureClass) pieces.push(port.exposureClass);
+        return `<div>${escapeHtml(pieces.join(" • "))}${port.summary ? ` — ${escapeHtml(port.summary)}` : ""}</div>`;
+      }).join("")
+    : `<div>${escapeHtml(intelPortSummary(intel))}</div>`;
+
+  return `
+    <div class="detail-block">
+      <h4>Exposure intel</h4>
+      <div><strong>Label:</strong> ${escapeHtml(intel.label || "--")}</div>
+      <div><strong>Summary:</strong> ${escapeHtml(intel.summary || "--")}</div>
+      <div><strong>Reachable:</strong> ${escapeHtml(intel.reachable === null ? "unknown" : String(intel.reachable))}</div>
+      <div><strong>Latency:</strong> ${escapeHtml(fmtLatency(intel.latencyMs))}</div>
+      <div><strong>IP:</strong> ${escapeHtml(intel.ip || "--")}</div>
+      <div><strong>Exposure:</strong> ${escapeHtml(intel.exposureClass || "E0")}</div>
+      <div><strong>Confidence:</strong> ${escapeHtml(intel.confidence || "--")}</div>
+      <div><strong>Evidence mode:</strong> ${escapeHtml(intel.evidenceMode || "metadata-only")}</div>
+      <div><strong>Source:</strong> ${escapeHtml(intel.source || "manual")}</div>
+      <div style="margin-top:8px;"><strong>Surfaces:</strong> ${escapeHtml((intel.surfaceSummary || []).join(", ") || "--")}</div>
+      <div style="margin-top:8px;"><strong>Ports / services:</strong></div>
+      ${portLines}
+    </div>
+  `;
 }
 
 function showBusy(title, subtitle = "Applying changes") {
@@ -1296,6 +1427,7 @@ function scannerPayload() {
 }
 
 function renderBleEnrichmentHtml(entry) {
+  const intel = getIntelForEntry(entry);
   const manufacturerIds = Array.isArray(entry.manufacturer_ids) ? entry.manufacturer_ids : [];
   const serviceUuids = Array.isArray(entry.service_uuids) ? entry.service_uuids : [];
   const txPower = typeof entry.tx_power === "number" ? `${entry.tx_power} dBm` : "--";
@@ -1318,11 +1450,13 @@ function renderBleEnrichmentHtml(entry) {
       <div class="ble-sub">UUIDs: ${escapeHtml(String(serviceUuids.length))}${serviceUuids.length ? ` • ${escapeHtml(serviceLabel)}` : ""}</div>
       <div class="ble-sub">Tx: ${escapeHtml(txPower)} • Path loss: ${escapeHtml(pathLoss)}</div>
       <div class="ble-sub">Probe: passive only</div>
+      ${renderIntelInlineHtml(intel)}
     </div>
   `;
 }
 
 function renderWifiEnrichmentHtml(entry) {
+  const intel = getIntelForEntry(entry);
   const match = entry.match || {};
   const passive = match.passive || {};
 
@@ -1339,6 +1473,7 @@ function renderWifiEnrichmentHtml(entry) {
       <div class="wifi-sub">OUI: ${escapeHtml(oui)} • Band: ${escapeHtml(band)}</div>
       <div class="wifi-sub">Ch: ${escapeHtml(String(channel))} • Sec: ${escapeHtml(String(security))}</div>
       <div class="wifi-sub">${escapeHtml(hiddenState)} • Probe: passive only</div>
+      ${renderIntelInlineHtml(intel)}
     </div>
   `;
 }
@@ -1400,6 +1535,7 @@ function buildBleDetailHtml(entry) {
   const manufacturerIds = Array.isArray(entry.manufacturer_ids) ? entry.manufacturer_ids : [];
   const serviceUuids = Array.isArray(entry.service_uuids) ? entry.service_uuids : [];
   const related = entry.related || null;
+  const intel = getIntelForEntry(entry);
 
   return `
     <div class="detail-grid">
@@ -1446,6 +1582,8 @@ function buildBleDetailHtml(entry) {
         <div><strong>Sublabel:</strong> ${escapeHtml(related?.sublabel || "--")}</div>
       </div>
 
+      ${buildIntelDetailHtml(intel)}
+
       <div class="detail-block">
         <h4>Raw match</h4>
         <pre>${jsonBlock(match)}</pre>
@@ -1463,6 +1601,7 @@ function buildWifiDetailHtml(entry) {
   const match = entry.match || {};
   const passive = match.passive || {};
   const related = entry.related || null;
+  const intel = getIntelForEntry(entry);
 
   return `
     <div class="detail-grid">
@@ -1511,6 +1650,8 @@ function buildWifiDetailHtml(entry) {
         <div><strong>Reason:</strong> ${escapeHtml(related?.reason || "--")}</div>
         <div><strong>Sublabel:</strong> ${escapeHtml(related?.sublabel || "--")}</div>
       </div>
+
+      ${buildIntelDetailHtml(intel)}
 
       <div class="detail-block">
         <h4>Probe</h4>
@@ -1578,6 +1719,7 @@ function exportSessionBundle() {
       summary: lastWifiSummary,
       memory: wifiMemory
     },
+    intel: currentIntel,
     selectedDetail
   };
 
@@ -1717,6 +1859,59 @@ async function loadListenDiagnostics() {
   }
 }
 
+
+async function loadIntelData() {
+  try {
+    const data = await fetchJson("/api/intel");
+    const items = Array.isArray(data?.store?.items) ? data.store.items : [];
+    currentIntel = {
+      items,
+      summary: data.summary || null,
+      byKey: buildIntelIndex(items)
+    };
+    updateIntelUi();
+    if (lastBleStatus || lastBleSummary) renderBleData(lastBleStatus || {}, lastBleSummary || { devices: [] });
+    if (lastWifiStatus || lastWifiSummary) renderWifiData(lastWifiStatus || {}, lastWifiSummary || { networks: [] });
+  } catch (err) {
+    if (intelStateBadge) intelStateBadge.textContent = "Intel: error";
+    if (intelStatusText) intelStatusText.textContent = `Intel load failed: ${err.message}`;
+  }
+}
+
+function updateIntelUi() {
+  const summary = currentIntel.summary || { total: 0, reachable: 0, exposed: 0, byExposure: { E0: 0, E1: 0, E2: 0, E3: 0, E4: 0 } };
+  if (intelStateBadge) intelStateBadge.textContent = currentIntel.items.length ? "Intel: loaded" : "Intel: none";
+  if (intelEntriesBadge) intelEntriesBadge.textContent = `Entries: ${summary.total || 0}`;
+  if (intelReachableBadge) intelReachableBadge.textContent = `Reachable: ${summary.reachable || 0}`;
+  if (intelExposureBadge) intelExposureBadge.textContent = `E1-E4: ${summary.exposed || 0}`;
+  if (intelStatusText) intelStatusText.textContent = currentIntel.items.length
+    ? "Authorized metadata-only intel is being merged into nearby BLE/Wi-Fi hits."
+    : "No authorized metadata-only intel loaded yet.";
+  if (intelUpdatedText) {
+    intelUpdatedText.textContent = currentIntel.items.length
+      ? `Last intel refresh: ${fmtShortTime(new Date().toISOString())}`
+      : 'Add metadata-only intel into data/device-intel.json or POST it to /api/intel/upsert.';
+  }
+}
+
+function updateIntelTimer() {
+  if (intelTimer) clearInterval(intelTimer);
+  intelTimer = null;
+  intelTimer = setInterval(loadIntelData, 5000);
+}
+
+function countIntelCoverage(entries = []) {
+  let total = 0;
+  let exposed = 0;
+  entries.forEach((entry) => {
+    const intel = getIntelForEntry(entry);
+    if (!intel) return;
+    total += 1;
+    if ((intel.exposureClass || "E0") !== "E0") exposed += 1;
+  });
+  return { total, exposed };
+}
+
 function renderBleData(status, summaryData) {
   if (!bleStatusText) return;
 
@@ -1739,6 +1934,9 @@ function renderBleData(status, summaryData) {
   if (bleMatchBreakdownBadge) {
     bleMatchBreakdownBadge.textContent = `H/M/L/B/P/R: ${matchSummary.high ?? 0}/${matchSummary.medium ?? 0}/${matchSummary.low ?? 0}/${matchSummary.battery ?? 0}/${matchSummary.penguin ?? 0}/${matchSummary.raven ?? 0}`;
   }
+  const bleIntelCoverage = countIntelCoverage(getBleMemoryEntriesSorted());
+  if (bleIntelBadge) bleIntelBadge.textContent = `Intel: ${bleIntelCoverage.total}`;
+  if (bleExposureBadge) bleExposureBadge.textContent = `Exposure: ${bleIntelCoverage.exposed}`;
 
   if (bleStartBtn) bleStartBtn.disabled = enabled;
   if (bleStopBtn) bleStopBtn.disabled = !enabled;
@@ -1914,6 +2112,9 @@ function renderWifiData(status, summaryData) {
   if (wifiMatchBreakdownBadge) {
     wifiMatchBreakdownBadge.textContent = `H/M/L: ${matchSummary.high ?? 0}/${matchSummary.medium ?? 0}/${matchSummary.low ?? 0}`;
   }
+  const wifiIntelCoverage = countIntelCoverage(getWifiMemoryEntriesSorted());
+  if (wifiIntelBadge) wifiIntelBadge.textContent = `Intel: ${wifiIntelCoverage.total}`;
+  if (wifiExposureBadge) wifiExposureBadge.textContent = `Exposure: ${wifiIntelCoverage.exposed}`;
 
   if (wifiStartBtn) wifiStartBtn.disabled = enabled;
   if (wifiStopBtn) wifiStopBtn.disabled = !enabled;
@@ -2683,11 +2884,12 @@ window.addEventListener("unhandledrejection", (event) => {
   setUiMessage(`Async error: ${msg}`, "bad");
 });
 
-Promise.all([loadSettings(), loadScanner(), loadFiles()]).then(async () => {
+Promise.all([loadSettings(), loadScanner(), loadFiles(), loadIntelData()]).then(async () => {
   updateTimer();
   updateDiagnosticsTimer();
   updateBleTimer();
   updateWifiTimer();
+  updateIntelTimer();
   await refreshRecordStatus();
   await loadListenDiagnostics();
   await loadBleData();
