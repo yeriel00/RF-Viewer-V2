@@ -160,6 +160,21 @@ const ACTIVE_AGE_MS = 15000;
 const STALE_AGE_MS = 60000;
 const VERY_STALE_AGE_MS = 5 * 60 * 1000;
 
+/* Debounced recompute — avoids O(N×M) work on every 2-3s render */
+let _relatedLinksTimer = null;
+function scheduleRecomputeRelatedLinks() {
+  if (_relatedLinksTimer) return;
+  _relatedLinksTimer = setTimeout(() => {
+    _relatedLinksTimer = null;
+    recomputeRelatedLinks();
+  }, 5000);
+}
+
+/* Guarded textContent setter — skip write when value unchanged */
+function setText(el, val) {
+  if (el && el.textContent !== val) el.textContent = val;
+}
+
 let refreshTimer = null;
 let diagnosticsTimer = null;
 let bleTimer = null;
@@ -1021,7 +1036,9 @@ function getBleMemoryEntriesSorted() {
     const bSig = getBleSignal(b);
     if (bSig !== aSig) return bSig - aSig;
 
-    return parseTimeMs(b.last_seen) - parseTimeMs(a.last_seen);
+    const timeDiff = parseTimeMs(b.last_seen) - parseTimeMs(a.last_seen);
+    if (timeDiff !== 0) return timeDiff;
+    return (a.key || "").localeCompare(b.key || "");
   });
 
   return entries;
@@ -1047,7 +1064,9 @@ function getWifiMemoryEntriesSorted() {
     const bSig = getWifiSignal(b);
     if (bSig !== aSig) return bSig - aSig;
 
-    return parseTimeMs(b.last_seen) - parseTimeMs(a.last_seen);
+    const timeDiff = parseTimeMs(b.last_seen) - parseTimeMs(a.last_seen);
+    if (timeDiff !== 0) return timeDiff;
+    return (a.key || "").localeCompare(b.key || "");
   });
 
   return entries;
@@ -2621,24 +2640,24 @@ function _renderBleDataImpl(status, summaryData) {
   }
 
   mergeBleMemory(summaryData);
-  recomputeRelatedLinks();
+  scheduleRecomputeRelatedLinks();
 
   const enabled = Boolean(status?.enabled);
   const state = status?.status || summaryData?.status || (enabled ? "running" : "paused");
 
-  if (bleStateBadge) bleStateBadge.textContent = `BLE: ${String(state).toUpperCase()}`;
-  if (bleUniqueBadge) bleUniqueBadge.textContent = `Unique: ${summaryData?.total_unique_seen ?? 0}`;
-  if (bleActiveBadge) bleActiveBadge.textContent = `Active: ${summaryData?.active_unique_seen ?? 0}`;
-  if (bleEventsBadge) bleEventsBadge.textContent = `Events: ${summaryData?.total_events ?? 0}`;
+  setText(bleStateBadge, `BLE: ${String(state).toUpperCase()}`);
+  setText(bleUniqueBadge, `Unique: ${summaryData?.total_unique_seen ?? 0}`);
+  setText(bleActiveBadge, `Active: ${summaryData?.active_unique_seen ?? 0}`);
+  setText(bleEventsBadge, `Events: ${summaryData?.total_events ?? 0}`);
 
   const matchSummary = summaryData?.matches || {};
-  if (bleMatchBadge) bleMatchBadge.textContent = `Matches: ${matchSummary.total ?? 0}`;
+  setText(bleMatchBadge, `Matches: ${matchSummary.total ?? 0}`);
   if (bleMatchBreakdownBadge) {
-    bleMatchBreakdownBadge.textContent = `H/M/L/B/P/R: ${matchSummary.high ?? 0}/${matchSummary.medium ?? 0}/${matchSummary.low ?? 0}/${matchSummary.battery ?? 0}/${matchSummary.penguin ?? 0}/${matchSummary.raven ?? 0}`;
+    setText(bleMatchBreakdownBadge, `H/M/L/B/P/R: ${matchSummary.high ?? 0}/${matchSummary.medium ?? 0}/${matchSummary.low ?? 0}/${matchSummary.battery ?? 0}/${matchSummary.penguin ?? 0}/${matchSummary.raven ?? 0}`);
   }
   const bleIntelCoverage = countIntelCoverage(getBleMemoryEntriesSorted());
-  if (bleIntelBadge) bleIntelBadge.textContent = `Intel: ${bleIntelCoverage.total}`;
-  if (bleExposureBadge) bleExposureBadge.textContent = `Exposure: ${bleIntelCoverage.exposed}`;
+  setText(bleIntelBadge, `Intel: ${bleIntelCoverage.total}`);
+  setText(bleExposureBadge, `Exposure: ${bleIntelCoverage.exposed}`);
 
   if (bleStartBtn) bleStartBtn.disabled = enabled;
   if (bleStopBtn) bleStopBtn.disabled = !enabled;
@@ -2648,9 +2667,9 @@ function _renderBleDataImpl(status, summaryData) {
     if (strongest && typeof strongest.last_rssi === "number") {
       const strongestName = strongest.name || strongest.address || "unknown";
       const matchLabel = strongest.match?.matched ? ` | ${strongest.match.family} ${strongest.match.confidence}` : "";
-      bleStrongestBadge.textContent = `Strongest: ${strongestName} (${strongest.last_rssi} dBm${matchLabel})`;
+      setText(bleStrongestBadge, `Strongest: ${strongestName} (${strongest.last_rssi} dBm${matchLabel})`);
     } else {
-      bleStrongestBadge.textContent = "Strongest: --";
+      setText(bleStrongestBadge, "Strongest: --");
     }
   }
 
@@ -2658,7 +2677,7 @@ function _renderBleDataImpl(status, summaryData) {
   const lockedCount = rememberedEntries.filter((entry) => entry.locked).length;
   const activeCount = rememberedEntries.filter((entry) => entry.activeNow && getEntryAgeMs(entry) <= ACTIVE_AGE_MS).length;
 
-  if (bleRememberedBadge) bleRememberedBadge.textContent = `Remembered: ${rememberedEntries.length}`;
+  setText(bleRememberedBadge, `Remembered: ${rememberedEntries.length}`);
   if (bleMemoryInfo) bleMemoryInfo.textContent = `BLE memory stored locally in this browser • ${activeCount} active • ${lockedCount} locked • max ${MEMORY_LIMIT}`;
 
   if (state === "error") {
@@ -2821,24 +2840,24 @@ function _renderWifiDataImpl(status, summaryData) {
   }
 
   mergeWifiMemory(summaryData);
-  recomputeRelatedLinks();
+  scheduleRecomputeRelatedLinks();
 
   const enabled = Boolean(status?.enabled);
   const state = status?.status || summaryData?.status || (enabled ? "running" : "paused");
 
-  if (wifiStateBadge) wifiStateBadge.textContent = `Wi-Fi: ${String(state).toUpperCase()}`;
-  if (wifiUniqueBadge) wifiUniqueBadge.textContent = `Unique: ${summaryData?.total_unique_seen ?? 0}`;
-  if (wifiActiveBadge) wifiActiveBadge.textContent = `Active: ${summaryData?.active_unique_seen ?? 0}`;
-  if (wifiEventsBadge) wifiEventsBadge.textContent = `Events: ${summaryData?.total_events ?? 0}`;
+  setText(wifiStateBadge, `Wi-Fi: ${String(state).toUpperCase()}`);
+  setText(wifiUniqueBadge, `Unique: ${summaryData?.total_unique_seen ?? 0}`);
+  setText(wifiActiveBadge, `Active: ${summaryData?.active_unique_seen ?? 0}`);
+  setText(wifiEventsBadge, `Events: ${summaryData?.total_events ?? 0}`);
 
   const matchSummary = summaryData?.matches || {};
-  if (wifiMatchBadge) wifiMatchBadge.textContent = `Matches: ${matchSummary.total ?? 0}`;
+  setText(wifiMatchBadge, `Matches: ${matchSummary.total ?? 0}`);
   if (wifiMatchBreakdownBadge) {
-    wifiMatchBreakdownBadge.textContent = `H/M/L: ${matchSummary.high ?? 0}/${matchSummary.medium ?? 0}/${matchSummary.low ?? 0}`;
+    setText(wifiMatchBreakdownBadge, `H/M/L: ${matchSummary.high ?? 0}/${matchSummary.medium ?? 0}/${matchSummary.low ?? 0}`);
   }
   const wifiIntelCoverage = countIntelCoverage(getWifiMemoryEntriesSorted());
-  if (wifiIntelBadge) wifiIntelBadge.textContent = `Intel: ${wifiIntelCoverage.total}`;
-  if (wifiExposureBadge) wifiExposureBadge.textContent = `Exposure: ${wifiIntelCoverage.exposed}`;
+  setText(wifiIntelBadge, `Intel: ${wifiIntelCoverage.total}`);
+  setText(wifiExposureBadge, `Exposure: ${wifiIntelCoverage.exposed}`);
 
   if (wifiStartBtn) wifiStartBtn.disabled = enabled;
   if (wifiStopBtn) wifiStopBtn.disabled = !enabled;
@@ -2847,9 +2866,9 @@ function _renderWifiDataImpl(status, summaryData) {
   if (wifiStrongestBadge) {
     if (strongest && typeof strongest.last_signal === "number") {
       const name = strongest.ssid || strongest.bssid || "unknown";
-      wifiStrongestBadge.textContent = `Strongest: ${name} (${strongest.last_signal}%)`;
+      setText(wifiStrongestBadge, `Strongest: ${name} (${strongest.last_signal}%)`);
     } else {
-      wifiStrongestBadge.textContent = "Strongest: --";
+      setText(wifiStrongestBadge, "Strongest: --");
     }
   }
 
@@ -2857,7 +2876,7 @@ function _renderWifiDataImpl(status, summaryData) {
   const lockedCount = rememberedEntries.filter((entry) => entry.locked).length;
   const activeCount = rememberedEntries.filter((entry) => entry.activeNow && getEntryAgeMs(entry) <= ACTIVE_AGE_MS).length;
 
-  if (wifiRememberedBadge) wifiRememberedBadge.textContent = `Remembered: ${rememberedEntries.length}`;
+  setText(wifiRememberedBadge, `Remembered: ${rememberedEntries.length}`);
   if (wifiMemoryInfo) wifiMemoryInfo.textContent = `Wi-Fi memory stored locally in this browser • ${activeCount} active • ${lockedCount} locked • max ${MEMORY_LIMIT}`;
 
   if (state === "error") {
