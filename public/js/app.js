@@ -176,6 +176,17 @@ let pendingWifiRender = null;
 /* Content-hash cache — skip innerHTML when nothing changed */
 let lastBleTableHtml = "";
 let lastWifiTableHtml = "";
+/* Atomic tbody swap — avoids the blank flash of innerHTML = "" */
+function swapTbody(tbody, html) {
+  const tmp = document.createElement("tbody");
+  tmp.innerHTML = html;
+  tbody.replaceChildren(...tmp.childNodes);
+}
+/* rAF render coalescing — collapse back-to-back renders into a single paint */
+let bleRafId = null;
+let bleRafArgs = null;
+let wifiRafId = null;
+let wifiRafArgs = null;
 let fusionTimer = null;
 
 let currentTrace = [];
@@ -1920,8 +1931,10 @@ async function loadIntelData() {
       byKey: buildIntelIndex(items)
     };
     updateIntelUi();
-    if (lastBleStatus || lastBleSummary) renderBleData(lastBleStatus || {}, lastBleSummary || { devices: [] });
-    if (lastWifiStatus || lastWifiSummary) renderWifiData(lastWifiStatus || {}, lastWifiSummary || { networks: [] });
+    // Invalidate caches so the next timer-driven render picks up intel changes.
+    // Avoids triggering extra full renders that cause visible flicker.
+    lastBleTableHtml = "";
+    lastWifiTableHtml = "";
   } catch (err) {
     if (intelStateBadge) intelStateBadge.textContent = "Intel: error";
     if (intelStatusText) intelStatusText.textContent = `Intel load failed: ${err.message}`;
@@ -2584,6 +2597,18 @@ function countIntelCoverage(entries = []) {
 }
 
 function renderBleData(status, summaryData) {
+  bleRafArgs = [status, summaryData];
+  if (!bleRafId) {
+    bleRafId = requestAnimationFrame(() => {
+      bleRafId = null;
+      const args = bleRafArgs;
+      bleRafArgs = null;
+      _renderBleDataImpl(args[0], args[1]);
+    });
+  }
+}
+
+function _renderBleDataImpl(status, summaryData) {
   if (!bleStatusText) return;
 
   lastBleStatus = status || null;
@@ -2651,7 +2676,7 @@ function renderBleData(status, summaryData) {
   if (!rememberedEntries.length) {
     const emptyHtml = '<tr><td colspan="9" class="muted">No BLE devices captured yet.</td></tr>';
     if (lastBleTableHtml !== emptyHtml) {
-      bleDevicesBody.innerHTML = emptyHtml;
+      swapTbody(bleDevicesBody, emptyHtml);
       lastBleTableHtml = emptyHtml;
     }
     return;
@@ -2731,7 +2756,7 @@ function renderBleData(status, summaryData) {
     `;
   }).join("");
   if (newHtml !== lastBleTableHtml) {
-    bleDevicesBody.innerHTML = newHtml;
+    swapTbody(bleDevicesBody, newHtml);
     lastBleTableHtml = newHtml;
   }
 }
@@ -2772,6 +2797,18 @@ async function stopBleScanner() {
 }
 
 function renderWifiData(status, summaryData) {
+  wifiRafArgs = [status, summaryData];
+  if (!wifiRafId) {
+    wifiRafId = requestAnimationFrame(() => {
+      wifiRafId = null;
+      const args = wifiRafArgs;
+      wifiRafArgs = null;
+      _renderWifiDataImpl(args[0], args[1]);
+    });
+  }
+}
+
+function _renderWifiDataImpl(status, summaryData) {
   if (!wifiStatusText) return;
 
   lastWifiStatus = status || null;
@@ -2838,7 +2875,7 @@ function renderWifiData(status, summaryData) {
   if (!rememberedEntries.length) {
     const emptyHtml = '<tr><td colspan="9" class="muted">No Wi-Fi networks captured yet.</td></tr>';
     if (lastWifiTableHtml !== emptyHtml) {
-      wifiNetworksBody.innerHTML = emptyHtml;
+      swapTbody(wifiNetworksBody, emptyHtml);
       lastWifiTableHtml = emptyHtml;
     }
     return;
@@ -2908,7 +2945,7 @@ function renderWifiData(status, summaryData) {
     `;
   }).join("");
   if (newHtml !== lastWifiTableHtml) {
-    wifiNetworksBody.innerHTML = newHtml;
+    swapTbody(wifiNetworksBody, newHtml);
     lastWifiTableHtml = newHtml;
   }
 }
@@ -2956,7 +2993,7 @@ function clearBleMemory() {
     renderBleData(lastBleStatus || {}, lastBleSummary || { devices: [] });
   } else if (bleDevicesBody) {
     lastBleTableHtml = "";
-    bleDevicesBody.innerHTML = `<tr><td colspan="9" class="muted">No BLE devices captured yet.</td></tr>`;
+    swapTbody(bleDevicesBody, `<tr><td colspan="9" class="muted">No BLE devices captured yet.</td></tr>`);
   }
 }
 
@@ -2968,7 +3005,7 @@ function clearWifiMemory() {
     renderWifiData(lastWifiStatus || {}, lastWifiSummary || { networks: [] });
   } else if (wifiNetworksBody) {
     lastWifiTableHtml = "";
-    wifiNetworksBody.innerHTML = `<tr><td colspan="9" class="muted">No Wi-Fi networks captured yet.</td></tr>`;
+    swapTbody(wifiNetworksBody, `<tr><td colspan="9" class="muted">No Wi-Fi networks captured yet.</td></tr>`);
   }
 }
 
