@@ -3687,35 +3687,40 @@ window.addEventListener("unhandledrejection", (event) => {
   const bleWrap = bleDevicesBody ? bleDevicesBody.closest(".table-wrap") : null;
   const wifiWrap = wifiNetworksBody ? wifiNetworksBody.closest(".table-wrap") : null;
 
-  if (bleWrap) {
-    bleWrap.addEventListener("scroll", () => {
-      bleScrolling = true;
-      clearTimeout(bleScrollTimeout);
-      bleScrollTimeout = setTimeout(() => {
-        bleScrolling = false;
-        if (pendingBleRender) {
-          const fn = pendingBleRender;
-          pendingBleRender = null;
-          fn();
-        }
-      }, 300);
-    }, { passive: true });
+  function deferBle() {
+    bleScrolling = true;
+    clearTimeout(bleScrollTimeout);
+    bleScrollTimeout = setTimeout(() => {
+      bleScrolling = false;
+      if (pendingBleRender) {
+        const fn = pendingBleRender;
+        pendingBleRender = null;
+        fn();
+      }
+    }, 300);
   }
 
-  if (wifiWrap) {
-    wifiWrap.addEventListener("scroll", () => {
-      wifiScrolling = true;
-      clearTimeout(wifiScrollTimeout);
-      wifiScrollTimeout = setTimeout(() => {
-        wifiScrolling = false;
-        if (pendingWifiRender) {
-          const fn = pendingWifiRender;
-          pendingWifiRender = null;
-          fn();
-        }
-      }, 300);
-    }, { passive: true });
+  function deferWifi() {
+    wifiScrolling = true;
+    clearTimeout(wifiScrollTimeout);
+    wifiScrollTimeout = setTimeout(() => {
+      wifiScrolling = false;
+      if (pendingWifiRender) {
+        const fn = pendingWifiRender;
+        pendingWifiRender = null;
+        fn();
+      }
+    }, 300);
   }
+
+  if (bleWrap) bleWrap.addEventListener("scroll", deferBle, { passive: true });
+  if (wifiWrap) wifiWrap.addEventListener("scroll", deferWifi, { passive: true });
+
+  // Also suppress renders during page-level scroll (window / body)
+  window.addEventListener("scroll", () => {
+    deferBle();
+    deferWifi();
+  }, { passive: true });
 })();
 
 Promise.all([loadSettings(), loadScanner(), loadFiles(), loadIntelData(), loadFusionData()]).then(async () => {
